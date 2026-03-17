@@ -51,6 +51,10 @@ export function canUnitStrikeTarget(
   return isInRange(attackerWeapon, distance);
 }
 
+export function getEquippedWeapon(state: RuntimeGameState, unit: UnitState): WeaponDefinition | undefined {
+  return state.map.weapons.find((weapon) => weapon.id === unit.equippedWeaponId);
+}
+
 function calculateDamage(
   state: RuntimeGameState,
   attacker: UnitState,
@@ -66,10 +70,6 @@ function calculateDamage(
     state.rules.minimumDamage,
     injuryAdjustedAttack + weapon.might + triangleBonus + speedBonus - injuryAdjustedDefense,
   );
-}
-
-function getEquippedWeapon(state: RuntimeGameState, unit: UnitState): WeaponDefinition | undefined {
-  return state.map.weapons.find((weapon) => weapon.id === unit.equippedWeaponId);
 }
 
 function isInRange(weapon: WeaponDefinition, distance: number): boolean {

@@ -1,13 +1,16 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAppDispatch, useAppSelector } from "../../app/hooks";
 import { dispatchGameAction, resetDemoState, undoAction } from "../../app/slices/gameSlice";
 import { getCombatPreview } from "../../game/combat/preview";
 import {
   canUndo,
+  getAttackReachPreviewPositions,
+  getMovementPreviewPositions,
   getReachablePositions,
   getUnitAttackOptions,
 } from "../../game/core/state";
 import type { Position, RuntimeGameState, UnitState } from "../../game/types";
+import { BattleCanvas } from "./BattleCanvas";
 
 type PendingAction = "none" | "chooseAction" | "chooseAttackTarget";
 
@@ -35,6 +38,14 @@ export function BattleScreen() {
     () => (selectedUnit && !stagedDestination ? getReachablePositions(runtime, selectedUnit.id) : []),
     [runtime, selectedUnit, stagedDestination],
   );
+  const hoveredMovePreviewTiles = useMemo(
+    () => (hoveredUnit ? getMovementPreviewPositions(runtime, hoveredUnit.id) : []),
+    [hoveredUnit, runtime],
+  );
+  const hoveredAttackPreviewTiles = useMemo(
+    () => (hoveredUnit ? getAttackReachPreviewPositions(runtime, hoveredUnit.id) : []),
+    [hoveredUnit, runtime],
+  );
 
   const attackableTargets = useMemo(() => {
     if (!selectedUnit) {
@@ -56,8 +67,28 @@ export function BattleScreen() {
     selectedUnit && previewTarget
       ? getCombatPreview(previewState, selectedUnit.id, previewTarget.id)
       : undefined;
+  const hoveredCombatPreview =
+    selectedUnit && hoveredAttackTarget
+      ? getCombatPreview(previewState, selectedUnit.id, hoveredAttackTarget.id)
+      : undefined;
+  const moveHighlightTiles = hoveredUnit ? hoveredMovePreviewTiles : reachableTiles;
+  const attackHighlightTiles = hoveredUnit
+    ? hoveredAttackPreviewTiles
+    : attackableTargets.map((target) => target.position);
 
-  const focusedUnit = hoveredUnit ?? selectedUnit;
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      event.preventDefault();
+      handleCancel();
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [pendingAction, selectedUnit, stagedDestination]);
 
   return (
     <main className="app-shell">
@@ -85,70 +116,103 @@ export function BattleScreen() {
 
         <div className="layout">
           <div className="map-card">
-            <div
-              className="battle-grid"
-              style={{
-                gridTemplateColumns: `repeat(${runtime.map.width}, minmax(0, 1fr))`,
-              }}
-            >
-              {runtime.map.tiles.flatMap((row, y) =>
-                row.map((tile, x) => {
-                  const position = { x, y };
-                  const unit = getUnitAtPosition(units, position);
-
-                  return (
-                    <button
-                      key={`${x}-${y}`}
-                      type="button"
-                      className={getTileClassName(position, tile.terrain, unit)}
-                      onClick={() => handleTileClick(position)}
-                      onMouseEnter={() => setHoveredTile(position)}
-                      onMouseLeave={() => setHoveredTile(undefined)}
-                    >
-                      <span className="tile-coordinates">
-                        {x},{y}
-                      </span>
-                      {unit ? <span className={`unit-badge unit-${unit.team}`}>{unit.name[0]}</span> : null}
-                    </button>
-                  );
-                }),
-              )}
-            </div>
+            <BattleCanvas
+              tiles={runtime.map.tiles}
+              width={runtime.map.width}
+              height={runtime.map.height}
+              units={units}
+              hoveredTile={hoveredTile}
+              selectedTile={selectedUnit?.position}
+              stagedTile={stagedDestination}
+              moveHighlightTiles={moveHighlightTiles}
+              attackHighlightTiles={attackHighlightTiles}
+              onTileClick={handleTileClick}
+              onTileHover={setHoveredTile}
+              onCancel={handleCancel}
+            />
           </div>
 
           <aside className="sidebar">
-            <section className="card">
-              <h2>{hoveredUnit ? "Hovered Unit" : "Selected Unit"}</h2>
-              {focusedUnit ? (
-                <>
-                  <p>{focusedUnit.name}</p>
-                  <p>
-                    HP: {focusedUnit.currentHp}/{focusedUnit.stats.maxHp}
-                  </p>
-                  <p>ATK: {focusedUnit.stats.attack}</p>
-                  <p>DEF: {focusedUnit.stats.defense}</p>
-                  <p>SPD: {focusedUnit.stats.speed}</p>
-                  <p>MOV: {focusedUnit.stats.movement}</p>
-                  {focusedUnit.id === selectedUnit?.id ? (
-                    <>
-                      <p>{focusedUnit.hasMoved ? "Moved this turn" : "Ready to move"}</p>
-                      <p>{focusedUnit.hasActed ? "Action spent" : "Action available"}</p>
-                    </>
-                  ) : null}
-                  {focusedUnit.id === selectedUnit?.id ? (
+            <div className="info-panels">
+              <section className="card compact-card">
+                <h2>Hover</h2>
+                {hoveredUnit ? (
+                  <>
+                    <p>{hoveredUnit.name}</p>
+                    <p>
+                      HP: {hoveredUnit.currentHp}/{hoveredUnit.stats.maxHp}
+                    </p>
+                    <p>ATK: {hoveredUnit.stats.attack}</p>
+                    <p>DEF: {hoveredUnit.stats.defense}</p>
+                    <p>SPD: {hoveredUnit.stats.speed}</p>
+                    <p>MOV: {hoveredUnit.stats.movement}</p>
+                    <p>
+                      Tile: {hoveredUnit.position.x},{hoveredUnit.position.y}
+                    </p>
+                    <p>
+                      Status: {hoveredUnit.team === "enemy" ? "Enemy" : hoveredUnit.team === "ally" ? "Ally" : "Player"}
+                    </p>
+                    {selectedUnit && hoveredCombatPreview ? (
+                      <>
+                        <p>
+                          Combat: {selectedUnit.name} deals {hoveredCombatPreview.attackerDamage}
+                        </p>
+                        <p>
+                          Counter: {hoveredCombatPreview.defenderCanCounter ? hoveredCombatPreview.defenderDamage : "None"}
+                        </p>
+                      </>
+                    ) : null}
+                  </>
+                ) : hoveredTile ? (
+                  <>
+                    <p>Empty Tile</p>
+                    <p>
+                      Position: {hoveredTile.x},{hoveredTile.y}
+                    </p>
+                    <p>Terrain: {runtime.map.tiles[hoveredTile.y][hoveredTile.x].terrain}</p>
+                    <p>
+                      Move Range: {moveHighlightTiles.some((tile) => tile.x === hoveredTile.x && tile.y === hoveredTile.y) ? "Yes" : "No"}
+                    </p>
+                    <p>
+                      Attack Reach: {attackHighlightTiles.some(
+                        (tile) => tile.x === hoveredTile.x && tile.y === hoveredTile.y,
+                      )
+                        ? "Yes"
+                        : "No"}
+                    </p>
+                  </>
+                ) : (
+                  <p>Move the mouse over the board to inspect a tile or unit.</p>
+                )}
+              </section>
+
+              <section className="card compact-card">
+                <h2>Selected</h2>
+                {selectedUnit ? (
+                  <>
+                    <p>{selectedUnit.name}</p>
+                    <p>
+                      HP: {selectedUnit.currentHp}/{selectedUnit.stats.maxHp}
+                    </p>
+                    <p>ATK: {selectedUnit.stats.attack}</p>
+                    <p>DEF: {selectedUnit.stats.defense}</p>
+                    <p>SPD: {selectedUnit.stats.speed}</p>
+                    <p>MOV: {selectedUnit.stats.movement}</p>
+                    <p>{selectedUnit.hasMoved ? "Moved this turn" : "Ready to move"}</p>
+                    <p>{selectedUnit.hasActed ? "Action spent" : "Action available"}</p>
                     <button
                       type="button"
-                      disabled={focusedUnit.hasActed}
+                      disabled={selectedUnit.hasActed}
                       onClick={handleWait}
                     >
                       Wait
                     </button>
-                  ) : null}
-                </>
-              ) : (
-                <p>Hover or select a unit to inspect it.</p>
-              )}
-            </section>
+                  </>
+                ) : (
+                  <p>No unit selected.</p>
+                )}
+              </section>
+            </div>
 
             <section className="card">
               <h2>Combat Preview</h2>
@@ -293,12 +357,30 @@ export function BattleScreen() {
 
   function handleReset() {
     clearStagedAction();
+    clearSelection();
     dispatch(resetDemoState());
   }
 
   function handleEndPhase() {
     clearStagedAction();
+    clearSelection();
     dispatch(dispatchGameAction({ type: "endPhase" }));
+  }
+
+  function handleCancel() {
+    if (pendingAction === "chooseAttackTarget") {
+      setPendingAction("chooseAction");
+      return;
+    }
+
+    if (stagedDestination || pendingAction === "chooseAction") {
+      clearStagedAction();
+      return;
+    }
+
+    if (selectedUnit) {
+      clearSelection();
+    }
   }
 
   function clearStagedAction() {
@@ -306,30 +388,8 @@ export function BattleScreen() {
     setPendingAction("none");
   }
 
-  function getTileClassName(position: Position, terrain: string, unit?: UnitState): string {
-    const isSelected =
-      selectedUnit?.position.x === position.x && selectedUnit?.position.y === position.y;
-    const isHovered = hoveredTile?.x === position.x && hoveredTile?.y === position.y;
-    const isReachable = reachableTiles.some(
-      (tile) => tile.x === position.x && tile.y === position.y,
-    );
-    const isStaged =
-      stagedDestination?.x === position.x && stagedDestination?.y === position.y;
-    const isAttackable = attackableTargets.some(
-      (target) => target.position.x === position.x && target.position.y === position.y,
-    );
-
-    return [
-      "tile",
-      `tile-${terrain}`,
-      isSelected ? "tile-selected" : "",
-      isHovered ? "tile-hovered" : "",
-      isReachable && !unit ? "tile-reachable" : "",
-      isStaged ? "tile-staged" : "",
-      isAttackable && unit?.team === "enemy" ? "tile-attackable" : "",
-    ]
-      .filter(Boolean)
-      .join(" ");
+  function clearSelection() {
+    dispatch(dispatchGameAction({ type: "selectUnit", unitId: undefined }));
   }
 }
 
