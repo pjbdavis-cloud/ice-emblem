@@ -11,6 +11,7 @@ type BattleCanvasProps = {
   stagedTile?: Position;
   moveHighlightTiles: Position[];
   attackHighlightTiles: Position[];
+  enemyThreatOutlineTiles: Position[];
   onTileClick: (position: Position) => void;
   onTileHover: (position?: Position) => void;
   onCancel: () => void;
@@ -22,7 +23,13 @@ type BoardMetrics = {
   tileSize: number;
 };
 
+type VisualPosition = {
+  x: number;
+  y: number;
+};
+
 const MAX_CANVAS_HEIGHT_OFFSET = 142;
+const MOVE_ANIMATION_MS = 180;
 
 export function BattleCanvas(props: BattleCanvasProps) {
   const {
@@ -35,6 +42,7 @@ export function BattleCanvas(props: BattleCanvasProps) {
     stagedTile,
     moveHighlightTiles,
     attackHighlightTiles,
+    enemyThreatOutlineTiles,
     onTileClick,
     onTileHover,
     onCancel,
@@ -42,11 +50,15 @@ export function BattleCanvas(props: BattleCanvasProps) {
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animationFrameRef = useRef<number | undefined>(undefined);
   const [metrics, setMetrics] = useState<BoardMetrics>({
     width: width * 64,
     height: height * 64,
     tileSize: 64,
   });
+  const [animatedPositions, setAnimatedPositions] = useState<Record<string, VisualPosition>>(() =>
+    Object.fromEntries(units.map((unit) => [unit.id, { x: unit.position.x, y: unit.position.y }])),
+  );
 
   const moveHighlightSet = useMemo(
     () => new Set(moveHighlightTiles.map(toPositionKey)),
@@ -55,6 +67,10 @@ export function BattleCanvas(props: BattleCanvasProps) {
   const attackHighlightSet = useMemo(
     () => new Set(attackHighlightTiles.map(toPositionKey)),
     [attackHighlightTiles],
+  );
+  const enemyThreatOutlineSet = useMemo(
+    () => new Set(enemyThreatOutlineTiles.map(toPositionKey)),
+    [enemyThreatOutlineTiles],
   );
 
   useEffect(() => {
@@ -90,6 +106,67 @@ export function BattleCanvas(props: BattleCanvasProps) {
   }, [height, width]);
 
   useEffect(() => {
+    const previousPositions = animatedPositions;
+    const nextTargets = Object.fromEntries(
+      units.map((unit) => [unit.id, { x: unit.position.x, y: unit.position.y }]),
+    );
+
+    const startPositions = Object.fromEntries(
+      units.map((unit) => [
+        unit.id,
+        previousPositions[unit.id] ?? { x: unit.position.x, y: unit.position.y },
+      ]),
+    );
+
+    const shouldAnimate = units.some((unit) => {
+      const start = startPositions[unit.id];
+      return start.x !== unit.position.x || start.y !== unit.position.y;
+    });
+
+    if (!shouldAnimate) {
+      setAnimatedPositions(nextTargets);
+      return;
+    }
+
+    const startTime = performance.now();
+
+    const tick = (now: number) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(1, elapsed / MOVE_ANIMATION_MS);
+      const eased = 1 - (1 - progress) * (1 - progress);
+
+      setAnimatedPositions(
+        Object.fromEntries(
+          units.map((unit) => {
+            const start = startPositions[unit.id];
+            const target = nextTargets[unit.id];
+
+            return [
+              unit.id,
+              {
+                x: start.x + (target.x - start.x) * eased,
+                y: start.y + (target.y - start.y) * eased,
+              },
+            ];
+          }),
+        ),
+      );
+
+      if (progress < 1) {
+        animationFrameRef.current = window.requestAnimationFrame(tick);
+      }
+    };
+
+    animationFrameRef.current = window.requestAnimationFrame(tick);
+
+    return () => {
+      if (animationFrameRef.current !== undefined) {
+        window.cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [units]);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) {
       return;
@@ -111,19 +188,23 @@ export function BattleCanvas(props: BattleCanvasProps) {
       width,
       height,
       units,
+      animatedPositions,
       hoveredTile,
       selectedTile,
       stagedTile,
       moveHighlightSet,
       attackHighlightSet,
+      enemyThreatOutlineSet,
       metrics,
     });
   }, [
     attackHighlightSet,
+    enemyThreatOutlineSet,
     height,
     hoveredTile,
     metrics,
     moveHighlightSet,
+    animatedPositions,
     selectedTile,
     stagedTile,
     tiles,
@@ -164,11 +245,13 @@ function drawBoard(
     width: number;
     height: number;
     units: UnitState[];
+    animatedPositions: Record<string, VisualPosition>;
     hoveredTile?: Position;
     selectedTile?: Position;
     stagedTile?: Position;
     moveHighlightSet: Set<string>;
     attackHighlightSet: Set<string>;
+    enemyThreatOutlineSet: Set<string>;
     metrics: BoardMetrics;
   },
 ) {
@@ -177,11 +260,13 @@ function drawBoard(
     width,
     height,
     units,
+    animatedPositions,
     hoveredTile,
     selectedTile,
     stagedTile,
     moveHighlightSet,
     attackHighlightSet,
+    enemyThreatOutlineSet,
     metrics,
   } = input;
 
@@ -213,6 +298,12 @@ function drawBoard(
         context.fill();
       }
 
+      if (enemyThreatOutlineSet.has(key)) {
+        context.fillStyle = "rgba(184, 32, 24, 0.08)";
+        context.fillRect(px, py, metrics.tileSize, metrics.tileSize);
+        drawThreatBoundary(context, { x, y }, enemyThreatOutlineSet, metrics.tileSize);
+      }
+
       if (selectedTile && selectedTile.x === x && selectedTile.y === y) {
         context.strokeStyle = "#194d8d";
         context.lineWidth = 4;
@@ -240,13 +331,23 @@ function drawBoard(
   }
 
   for (const unit of units.filter((candidate) => !candidate.isDefeated)) {
-    drawUnit(context, unit, metrics.tileSize);
+    drawUnit(
+      context,
+      unit,
+      metrics.tileSize,
+      animatedPositions[unit.id] ?? { x: unit.position.x, y: unit.position.y },
+    );
   }
 }
 
-function drawUnit(context: CanvasRenderingContext2D, unit: UnitState, tileSize: number) {
-  const centerX = unit.position.x * tileSize + tileSize / 2;
-  const centerY = unit.position.y * tileSize + tileSize / 2;
+function drawUnit(
+  context: CanvasRenderingContext2D,
+  unit: UnitState,
+  tileSize: number,
+  visualPosition: VisualPosition,
+) {
+  const centerX = visualPosition.x * tileSize + tileSize / 2;
+  const centerY = visualPosition.y * tileSize + tileSize / 2;
   const radius = Math.max(12, tileSize * 0.22);
   const hpRatio = Math.max(0, Math.min(1, unit.currentHp / unit.stats.maxHp));
   const barWidth = Math.max(20, tileSize * 0.58);
@@ -331,6 +432,54 @@ function getHealthBarColor(hpRatio: number): string {
   }
 
   return "#4c9a58";
+}
+
+function drawThreatBoundary(
+  context: CanvasRenderingContext2D,
+  position: Position,
+  threatSet: Set<string>,
+  tileSize: number,
+) {
+  const { x, y } = position;
+  const px = x * tileSize;
+  const py = y * tileSize;
+  const left = px;
+  const right = px + tileSize;
+  const top = py;
+  const bottom = py + tileSize;
+
+  context.strokeStyle = "rgba(184, 32, 24, 0.95)";
+  context.lineWidth = 3;
+  context.lineCap = "round";
+
+  if (!threatSet.has(toPositionKey({ x, y: y - 1 }))) {
+    drawLine(context, left, top, right, top);
+  }
+
+  if (!threatSet.has(toPositionKey({ x: x + 1, y }))) {
+    drawLine(context, right, top, right, bottom);
+  }
+
+  if (!threatSet.has(toPositionKey({ x, y: y + 1 }))) {
+    drawLine(context, right, bottom, left, bottom);
+  }
+
+  if (!threatSet.has(toPositionKey({ x: x - 1, y }))) {
+    drawLine(context, left, bottom, left, top);
+  }
+}
+
+function drawLine(
+  context: CanvasRenderingContext2D,
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+) {
+  context.beginPath();
+  context.moveTo(startX, startY);
+  context.lineTo(endX, endY);
+  context.stroke();
 }
 
 function roundRect(

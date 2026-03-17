@@ -7,6 +7,7 @@ import {
   getAttackReachPreviewPositions,
   getMovementPreviewPositions,
   getReachablePositions,
+  getThreatenedPositions,
   getUnitAttackOptions,
 } from "../../game/core/state";
 import type { Position, RuntimeGameState, UnitState } from "../../game/types";
@@ -21,6 +22,7 @@ export function BattleScreen() {
   const [hoveredTile, setHoveredTile] = useState<Position | undefined>();
   const [stagedDestination, setStagedDestination] = useState<Position | undefined>();
   const [pendingAction, setPendingAction] = useState<PendingAction>("none");
+  const [showEnemyThreatOverlay, setShowEnemyThreatOverlay] = useState(true);
 
   const selectedUnit = runtime.selectedUnitId ? runtime.units[runtime.selectedUnitId] : undefined;
   const units = Object.values(runtime.units);
@@ -71,19 +73,43 @@ export function BattleScreen() {
     selectedUnit && hoveredAttackTarget
       ? getCombatPreview(previewState, selectedUnit.id, hoveredAttackTarget.id)
       : undefined;
-  const moveHighlightTiles = hoveredUnit ? hoveredMovePreviewTiles : reachableTiles;
-  const attackHighlightTiles = hoveredUnit
-    ? hoveredAttackPreviewTiles
-    : attackableTargets.map((target) => target.position);
+  const showingSelectedRanges = Boolean(selectedUnit);
+  const moveHighlightTiles = showingSelectedRanges ? reachableTiles : hoveredMovePreviewTiles;
+  const selectedAttackPreviewTiles = useMemo(() => {
+    if (!selectedUnit) {
+      return [];
+    }
+
+    const sourceState = stagedDestination ? movePreviewState : runtime;
+    return getAttackReachPreviewPositions(sourceState, selectedUnit.id);
+  }, [movePreviewState, runtime, selectedUnit, stagedDestination]);
+  const attackHighlightTiles = showingSelectedRanges
+    ? selectedAttackPreviewTiles
+    : hoveredAttackPreviewTiles;
+  const enemyThreatOutlineTiles = useMemo(() => {
+    if (!showEnemyThreatOverlay) {
+      return [];
+    }
+
+    return uniquePositions(
+      units
+        .filter((unit) => unit.team === "enemy" && !unit.isDefeated)
+        .flatMap((unit) => getThreatenedPositions(runtime, unit.id)),
+    );
+  }, [runtime, showEnemyThreatOverlay, units]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key !== "Escape") {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        handleCancel();
         return;
       }
 
-      event.preventDefault();
-      handleCancel();
+      if (event.code === "Space") {
+        event.preventDefault();
+        setShowEnemyThreatOverlay((current) => !current);
+      }
     }
 
     window.addEventListener("keydown", handleKeyDown);
@@ -126,6 +152,7 @@ export function BattleScreen() {
               stagedTile={stagedDestination}
               moveHighlightTiles={moveHighlightTiles}
               attackHighlightTiles={attackHighlightTiles}
+              enemyThreatOutlineTiles={enemyThreatOutlineTiles}
               onTileClick={handleTileClick}
               onTileHover={setHoveredTile}
               onCancel={handleCancel}
@@ -274,6 +301,9 @@ export function BattleScreen() {
               ) : (
                 <p>Click a blue tile to stage a move. The unit will not move until you confirm Wait or Attack.</p>
               )}
+              <p>
+                Enemy Threat: {showEnemyThreatOverlay ? "On" : "Off"} (press Space)
+              </p>
             </section>
           </aside>
         </div>
@@ -420,4 +450,10 @@ function createPreviewState(
       },
     },
   };
+}
+
+function uniquePositions(positions: Position[]): Position[] {
+  return Array.from(
+    new Map(positions.map((position) => [`${position.x},${position.y}`, position])).values(),
+  );
 }

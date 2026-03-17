@@ -404,6 +404,7 @@ export function getMovementPreviewPositions(state: RuntimeGameState, unitId: str
   ];
 
   visited.set(toPositionKey(unit.position), 0);
+  reachable.set(toPositionKey(unit.position), unit.position);
 
   while (queue.length > 0) {
     const current = queue.shift();
@@ -431,6 +432,9 @@ export function getMovementPreviewPositions(state: RuntimeGameState, unitId: str
 
       const occupant = getUnitAtPosition(state, neighbor);
       if (occupant) {
+        if (occupant.team === unit.team) {
+          reachable.set(key, neighbor);
+        }
         continue;
       }
 
@@ -470,6 +474,11 @@ export function getAttackReachPreviewPositions(state: RuntimeGameState, unitId: 
           continue;
         }
 
+        const occupant = getUnitAtPosition(state, position);
+        if (occupant && occupant.team === unit.team) {
+          continue;
+        }
+
         const key = toPositionKey(position);
         if (blockedPositions.has(key)) {
           continue;
@@ -481,6 +490,38 @@ export function getAttackReachPreviewPositions(state: RuntimeGameState, unitId: 
   }
 
   return Array.from(attackPositions.values()).sort(sortPositions);
+}
+
+export function getThreatenedPositions(state: RuntimeGameState, unitId: string): Position[] {
+  const unit = state.units[unitId];
+  const weapon = unit ? getEquippedWeapon(state, unit) : undefined;
+  if (!unit || !weapon || unit.isDefeated) {
+    return [];
+  }
+
+  const movePositions = getMovementPreviewPositions(state, unitId);
+  const threatenedPositions = new Map<string, Position>();
+  const origins = [unit.position, ...movePositions];
+
+  for (const origin of origins) {
+    for (let dx = -weapon.maxRange; dx <= weapon.maxRange; dx += 1) {
+      for (let dy = -weapon.maxRange; dy <= weapon.maxRange; dy += 1) {
+        const distance = Math.abs(dx) + Math.abs(dy);
+        if (distance < weapon.minRange || distance > weapon.maxRange) {
+          continue;
+        }
+
+        const position = { x: origin.x + dx, y: origin.y + dy };
+        if (!isPositionInBounds(state, position)) {
+          continue;
+        }
+
+        threatenedPositions.set(toPositionKey(position), position);
+      }
+    }
+  }
+
+  return Array.from(threatenedPositions.values()).sort(sortPositions);
 }
 
 export function canUnitMoveTo(state: RuntimeGameState, unitId: string, destination: Position): boolean {
