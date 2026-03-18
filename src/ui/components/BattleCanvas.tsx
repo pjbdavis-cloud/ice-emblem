@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Position, RuntimeGameState, Team, TileDefinition, UnitState } from "../../game/types";
 import type { PresentationEvent } from "../presentation/types";
+import { resolveUnitSprite } from "../sprites/unitSprites";
+import { useSpriteImages } from "../sprites/useSpriteImages";
+import type { UnitSpriteDefinition, UnitSpritePose } from "../sprites/types";
 
 type BattleCanvasProps = {
   runtime: RuntimeGameState;
@@ -16,6 +19,7 @@ type BattleCanvasProps = {
   enemyThreatOutlineTiles: Position[];
   presentationQueue: PresentationEvent[];
   grayLockUnitIds: string[];
+  pendingDefeatedUnitIds: string[];
   onAnimationStateChange?: (isAnimating: boolean) => void;
   onPresentationComplete?: () => void;
   onTileClick: (position: Position) => void;
@@ -46,6 +50,7 @@ type DisplayedUnitState = {
   hasActed: boolean;
   opacity: number;
   shouldRender: boolean;
+  spritePose: UnitSpritePose;
 };
 
 const MAX_CANVAS_HEIGHT_OFFSET = 142;
@@ -69,6 +74,7 @@ export function BattleCanvas(props: BattleCanvasProps) {
     enemyThreatOutlineTiles,
     presentationQueue,
     grayLockUnitIds,
+    pendingDefeatedUnitIds,
     onAnimationStateChange,
     onPresentationComplete,
     onTileClick,
@@ -99,6 +105,15 @@ export function BattleCanvas(props: BattleCanvasProps) {
     () => new Set(enemyThreatOutlineTiles.map(toPositionKey)),
     [enemyThreatOutlineTiles],
   );
+  const spriteDefinitions = useMemo(
+    () =>
+      units.flatMap((unit) => {
+        const poses: UnitSpritePose[] = ["idle", "walk", "attack", "hurt", "death"];
+        return poses.map((pose) => resolveUnitSprite(unit, pose).definition);
+      }),
+    [units],
+  );
+  const spriteImages = useSpriteImages(spriteDefinitions);
 
   useEffect(() => {
     const wrapper = wrapperRef.current;
@@ -218,7 +233,9 @@ export function BattleCanvas(props: BattleCanvasProps) {
       activePresentation,
       presentationQueue,
       grayLockUnitIds,
+      pendingDefeatedUnitIds,
       animationClock,
+      spriteImages,
     });
   }, [
     activePresentation,
@@ -226,6 +243,8 @@ export function BattleCanvas(props: BattleCanvasProps) {
     attackHighlightSet,
     enemyThreatOutlineSet,
     grayLockUnitIds,
+    pendingDefeatedUnitIds,
+    spriteImages,
     height,
     hoveredTile,
     metrics,
@@ -283,7 +302,9 @@ function drawBoard(
     activePresentation?: ActivePresentation;
     presentationQueue: PresentationEvent[];
     grayLockUnitIds: string[];
+    pendingDefeatedUnitIds: string[];
     animationClock: number;
+    spriteImages: Record<string, HTMLImageElement>;
   },
 ) {
   const {
@@ -302,7 +323,9 @@ function drawBoard(
     activePresentation,
     presentationQueue,
     grayLockUnitIds,
+    pendingDefeatedUnitIds,
     animationClock,
+    spriteImages,
   } = input;
 
   for (let y = 0; y < height; y += 1) {
@@ -366,10 +389,27 @@ function drawBoard(
   }
 
   for (const unit of units) {
+    const isUnitInPresentation = presentationQueue.some((event) =>
+      event.type === "move" || event.type === "pause"
+        ? event.unitId === unit.id
+        : event.attackerId === unit.id || event.defenderId === unit.id,
+    ) || (
+      activePresentation
+        ? activePresentation.event.type === "move" || activePresentation.event.type === "pause"
+          ? activePresentation.event.unitId === unit.id
+          : activePresentation.event.attackerId === unit.id || activePresentation.event.defenderId === unit.id
+        : false
+    );
+
+    if ((unit.isDefeated || unit.currentHp <= 0) && !isUnitInPresentation) {
+      continue;
+    }
+
     const displayedState = getDisplayedUnitState(
       unit,
       presentationQueue,
       grayLockUnitIds,
+      pendingDefeatedUnitIds,
       activePresentation,
       animationClock,
     );
@@ -385,6 +425,7 @@ function drawBoard(
       displayedState,
       activePresentation,
       animationClock,
+      spriteImages,
     );
   }
 }
@@ -397,6 +438,7 @@ function drawUnit(
   displayedState: DisplayedUnitState,
   activePresentation: ActivePresentation | undefined,
   animationClock: number,
+  spriteImages: Record<string, HTMLImageElement>,
 ) {
   const combatMotion = getCombatVisualState(unit.id, activePresentation, animationClock, tileSize);
   const centerX = displayedState.position.x * tileSize + tileSize / 2 + combatMotion.shakeX;
@@ -422,21 +464,38 @@ function drawUnit(
   const unitFillColor = displayedState.hasActed ? "#7b7b7b" : getTeamColor(unit.team);
   const unitStrokeColor = displayedState.hasActed ? "rgba(222, 222, 222, 0.92)" : "rgba(255, 250, 240, 0.9)";
   const unitTextColor = displayedState.hasActed ? "#f2f2f2" : "#fff8ed";
+  const spriteDefinition = resolveUnitSprite(unit, displayedState.spritePose).definition;
+  const spriteImage = spriteDefinition ? spriteImages[spriteDefinition.src] : undefined;
+  const spriteSize = Math.max(24, tileSize * 0.72);
 
   context.fillStyle = unitFillColor;
-  context.beginPath();
-  context.arc(centerX, centerY, radius, 0, Math.PI * 2);
-  context.fill();
+  if (spriteImage && spriteImage.complete && spriteImage.naturalWidth > 0) {
+    drawSprite(
+      context,
+      spriteImage,
+      centerX,
+      centerY,
+      spriteSize,
+      spriteDefinition,
+      displayedState.spritePose,
+      activePresentation,
+      animationClock,
+    );
+  } else {
+    context.beginPath();
+    context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+    context.fill();
 
-  context.strokeStyle = unitStrokeColor;
-  context.lineWidth = 2;
-  context.stroke();
+    context.strokeStyle = unitStrokeColor;
+    context.lineWidth = 2;
+    context.stroke();
 
-  context.fillStyle = unitTextColor;
-  context.font = `700 ${Math.max(12, tileSize * 0.28)}px Trebuchet MS`;
-  context.textAlign = "center";
-  context.textBaseline = "middle";
-  context.fillText(unit.name[0] ?? "?", centerX, centerY + 1);
+    context.fillStyle = unitTextColor;
+    context.font = `700 ${Math.max(12, tileSize * 0.28)}px Trebuchet MS`;
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(unit.name[0] ?? "?", centerX, centerY + 1);
+  }
   context.restore();
 }
 
@@ -444,6 +503,7 @@ function getDisplayedUnitState(
   unit: UnitState,
   presentationQueue: PresentationEvent[],
   grayLockUnitIds: string[],
+  pendingDefeatedUnitIds: string[],
   activePresentation: ActivePresentation | undefined,
   animationClock: number,
 ): DisplayedUnitState {
@@ -524,12 +584,13 @@ function getDisplayedUnitState(
   if (activeCombat) {
     opacity = getCombatDeathOpacity(unit.id, activeCombat, activeProgress);
   }
-
+  const isPendingDefeated = pendingDefeatedUnitIds.includes(unit.id);
+  const isDefeatedNow = unit.isDefeated || isPendingDefeated || hp <= 0;
   const shouldRender =
-    !unit.isDefeated ||
     hasUpcomingOrActivePresentation ||
-    Boolean(activeCombat) ||
-    opacity > 0;
+    (Boolean(activeCombat) && !isDefeatedNow) ||
+    (Boolean(activeCombat) && isDefeatedNow && opacity > 0) ||
+    (!isDefeatedNow && hp > 0);
 
   return {
     position,
@@ -537,7 +598,33 @@ function getDisplayedUnitState(
     hasActed,
     opacity,
     shouldRender,
+    spritePose: getDisplayedSpritePose(unit.id, activePresentation),
   };
+}
+
+function getDisplayedSpritePose(
+  unitId: string,
+  activePresentation: ActivePresentation | undefined,
+): UnitSpritePose {
+  if (!activePresentation) {
+    return "idle";
+  }
+
+  if (activePresentation.event.type === "move" && activePresentation.event.unitId === unitId) {
+    return "walk";
+  }
+
+  if (activePresentation.event.type === "combat") {
+    if (activePresentation.event.attackerId === unitId) {
+      return activePresentation.event.attackerToHp <= 0 ? "death" : "attack";
+    }
+
+    if (activePresentation.event.defenderId === unitId) {
+      return activePresentation.event.defenderToHp <= 0 ? "death" : "hurt";
+    }
+  }
+
+  return "idle";
 }
 
 function getCombatVisualState(
@@ -798,4 +885,66 @@ function getPathPosition(path: Position[], progress: number): VisualPosition {
     x: from.x + (to.x - from.x) * segmentProgress,
     y: from.y + (to.y - from.y) * segmentProgress,
   };
+}
+
+function drawSprite(
+  context: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  centerX: number,
+  centerY: number,
+  size: number,
+  definition: UnitSpriteDefinition | undefined,
+  pose: UnitSpritePose,
+  activePresentation: ActivePresentation | undefined,
+  animationClock: number,
+) {
+  const frameCount = Math.max(1, definition?.frameCount ?? 1);
+  const sourceWidth =
+    definition?.frameWidth ?? Math.floor(image.naturalWidth / frameCount) ?? image.naturalWidth;
+  const sourceHeight = definition?.frameHeight ?? image.naturalHeight;
+  const frameIndex = getSpriteFrameIndex(frameCount, definition?.frameDurationMs, pose, activePresentation, animationClock);
+  const sourceX = Math.min(frameIndex, frameCount - 1) * sourceWidth;
+  const sourceY = 0;
+  const drawX = centerX - size / 2;
+  const drawY = centerY - size / 2;
+  const offsetX = definition?.frameOffsetX ?? 0;
+  const offsetY = definition?.frameOffsetY ?? 0;
+
+  context.imageSmoothingEnabled = false;
+  context.drawImage(
+    image,
+    sourceX,
+    sourceY,
+    sourceWidth,
+    sourceHeight,
+    drawX + offsetX,
+    drawY + offsetY,
+    size,
+    size,
+  );
+}
+
+function getSpriteFrameIndex(
+  frameCount: number,
+  frameDurationMs: number | undefined,
+  pose: UnitSpritePose,
+  activePresentation: ActivePresentation | undefined,
+  animationClock: number,
+): number {
+  if (frameCount <= 1) {
+    return 0;
+  }
+
+  const msPerFrame = Math.max(60, frameDurationMs ?? 120);
+
+  if (!activePresentation) {
+    if (pose === "idle") {
+      return Math.floor(animationClock / msPerFrame) % frameCount;
+    }
+
+    return 0;
+  }
+
+  const elapsed = Math.max(0, animationClock - activePresentation.startedAt);
+  return Math.floor(elapsed / msPerFrame) % frameCount;
 }

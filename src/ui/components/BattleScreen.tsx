@@ -46,6 +46,15 @@ export function BattleScreen() {
 
   const selectedUnit = runtime.selectedUnitId ? runtime.units[runtime.selectedUnitId] : undefined;
   const units = Object.values(runtime.units);
+  const pendingDefeatedUnitIds = useMemo(() => {
+    if (!pendingRuntimeState) {
+      return [];
+    }
+
+    return Object.values(pendingRuntimeState.units)
+      .filter((unit) => unit.isDefeated)
+      .map((unit) => unit.id);
+  }, [pendingRuntimeState]);
   const hoveredUnit = hoveredTile ? getUnitAtPosition(units, hoveredTile) : undefined;
 
   const movePreviewState = useMemo(() => {
@@ -276,6 +285,7 @@ export function BattleScreen() {
               enemyThreatOutlineTiles={enemyThreatOutlineTiles}
               presentationQueue={presentationQueue}
               grayLockUnitIds={grayLockUnitIds}
+              pendingDefeatedUnitIds={pendingDefeatedUnitIds}
               onAnimationStateChange={setIsBoardAnimating}
               onPresentationComplete={handlePresentationComplete}
               onTileClick={handleTileClick}
