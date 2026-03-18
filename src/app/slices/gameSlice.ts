@@ -3,6 +3,7 @@ import {
   applyAction,
   canUndo,
   createInitialRuntimeState,
+  processNextEnemyAction,
   undoLastAction,
 } from "../../game/core/state";
 import { demoMap } from "../../game/data/demoMap";
@@ -23,6 +24,9 @@ const gameSlice = createSlice({
     dispatchGameAction(state, action: PayloadAction<GameAction>) {
       state.runtime = applyAction(state.runtime, action.payload);
     },
+    replaceRuntimeState(state, action: PayloadAction<RuntimeGameState>) {
+      state.runtime = action.payload;
+    },
     undoAction(state) {
       if (!canUndo(state.runtime)) {
         return;
@@ -33,8 +37,12 @@ const gameSlice = createSlice({
     resetDemoState(state) {
       state.runtime = createInitialRuntimeState(demoMap);
     },
+    stepEnemyPhase(state) {
+      state.runtime = processNextEnemyAction(state.runtime);
+    },
   },
 });
 
-export const { dispatchGameAction, resetDemoState, undoAction } = gameSlice.actions;
+export const { dispatchGameAction, replaceRuntimeState, resetDemoState, stepEnemyPhase, undoAction } =
+  gameSlice.actions;
 export const gameReducer = gameSlice.reducer;

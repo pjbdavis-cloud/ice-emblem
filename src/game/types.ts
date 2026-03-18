@@ -134,3 +134,28 @@ export type CombatPreview = {
   defenderDamage: number;
   defenderCanCounter: boolean;
 };
+
+export type PresentationEvent =
+  | {
+      type: "move";
+      unitId: string;
+      team: Team;
+      from: Position;
+      to: Position;
+      path: Position[];
+    }
+  | {
+      type: "pause";
+      unitId: string;
+      durationMs: number;
+    }
+  | {
+      type: "combat";
+      attackerId: string;
+      defenderId: string;
+      defenderCanCounter: boolean;
+      attackerFromHp: number;
+      attackerToHp: number;
+      defenderFromHp: number;
+      defenderToHp: number;
+    };

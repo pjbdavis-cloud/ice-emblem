@@ -22,13 +22,16 @@ export function getCombatPreview(
   const distance = getManhattanDistance(attacker.position, defender.position);
 
   const attackerCanHit = attackerWeapon ? isInRange(attackerWeapon, distance) : false;
-  const defenderCanCounter = defenderWeapon ? isInRange(defenderWeapon, distance) : false;
+  const attackerDamage =
+    attackerCanHit && attackerWeapon
+      ? calculateDamage(state, attacker, defender, attackerWeapon)
+      : 0;
+  const defenderSurvives = defender.currentHp - attackerDamage > 0;
+  const defenderCanCounter =
+    defenderSurvives && defenderWeapon ? isInRange(defenderWeapon, distance) : false;
 
   return {
-    attackerDamage:
-      attackerCanHit && attackerWeapon
-        ? calculateDamage(state, attacker, defender, attackerWeapon)
-        : 0,
+    attackerDamage,
     defenderDamage:
       defenderCanCounter && defenderWeapon
         ? calculateDamage(state, defender, attacker, defenderWeapon)

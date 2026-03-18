@@ -1,19 +1,25 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppDispatch, useAppSelector } from "../../app/hooks";
-import { dispatchGameAction, resetDemoState, undoAction } from "../../app/slices/gameSlice";
+import { dispatchGameAction, replaceRuntimeState, resetDemoState, undoAction } from "../../app/slices/gameSlice";
 import { getCombatPreview } from "../../game/combat/preview";
 import {
+  buildPlayerActionPresentation,
   canUndo,
   getAttackReachPreviewPositions,
   getMovementPreviewPositions,
   getReachablePositions,
   getThreatenedPositions,
   getUnitAttackOptions,
+  previewNextEnemyAction,
 } from "../../game/core/state";
 import type { Position, RuntimeGameState, UnitState } from "../../game/types";
 import { BattleCanvas } from "./BattleCanvas";
+import type { PresentationEvent } from "../presentation/types";
 
 type PendingAction = "none" | "chooseAction" | "chooseAttackTarget";
+
+const ENEMY_PHASE_STEP_DELAY_MS = 600;
+const PHASE_BANNER_DURATION_MS = 1600;
 
 export function BattleScreen() {
   const dispatch = useAppDispatch();
@@ -23,6 +29,20 @@ export function BattleScreen() {
   const [stagedDestination, setStagedDestination] = useState<Position | undefined>();
   const [pendingAction, setPendingAction] = useState<PendingAction>("none");
   const [showEnemyThreatOverlay, setShowEnemyThreatOverlay] = useState(true);
+  const [isBoardAnimating, setIsBoardAnimating] = useState(false);
+  const [presentationQueue, setPresentationQueue] = useState<PresentationEvent[]>([]);
+  const [pendingRuntimeState, setPendingRuntimeState] = useState<RuntimeGameState | undefined>();
+  const [presentationLog, setPresentationLog] = useState<string[]>([]);
+  const [grayLockUnitIds, setGrayLockUnitIds] = useState<string[]>([]);
+  const [phaseBanner, setPhaseBanner] = useState<{ phase: RuntimeGameState["phase"]; key: number }>({
+    phase: runtime.phase,
+    key: 0,
+  });
+  const [showPhaseBanner, setShowPhaseBanner] = useState(true);
+  const [pendingPhaseBanner, setPendingPhaseBanner] = useState<RuntimeGameState["phase"] | undefined>();
+  const previousPhaseRef = useRef(runtime.phase);
+  const isPlayerBannerBlocking = showPhaseBanner && phaseBanner.phase === "player";
+  const [bannerInstance, setBannerInstance] = useState(0);
 
   const selectedUnit = runtime.selectedUnitId ? runtime.units[runtime.selectedUnitId] : undefined;
   const units = Object.values(runtime.units);
@@ -100,6 +120,11 @@ export function BattleScreen() {
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
+      if (isPlayerBannerBlocking) {
+        event.preventDefault();
+        return;
+      }
+
       if (event.key === "Escape") {
         event.preventDefault();
         handleCancel();
@@ -114,7 +139,57 @@ export function BattleScreen() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [pendingAction, selectedUnit, stagedDestination]);
+  }, [isPlayerBannerBlocking, pendingAction, selectedUnit, stagedDestination]);
+
+  useEffect(() => {
+    if (previousPhaseRef.current === runtime.phase) {
+      return;
+    }
+
+    previousPhaseRef.current = runtime.phase;
+    setPendingPhaseBanner(runtime.phase);
+  }, [runtime.phase]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setShowPhaseBanner(false);
+    }, PHASE_BANNER_DURATION_MS);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [bannerInstance]);
+
+  useEffect(() => {
+    if (!pendingPhaseBanner || isBoardAnimating || presentationQueue.length > 0) {
+      return;
+    }
+
+    setPhaseBanner((current) => ({ phase: pendingPhaseBanner, key: current.key + 1 }));
+    setShowPhaseBanner(true);
+    setBannerInstance((current) => current + 1);
+    setPendingPhaseBanner(undefined);
+  }, [isBoardAnimating, pendingPhaseBanner, presentationQueue.length]);
+
+  useEffect(() => {
+    if (
+      runtime.phase !== "enemy" ||
+      isBoardAnimating ||
+      presentationQueue.length > 0 ||
+      pendingRuntimeState
+    ) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      const result = previewNextEnemyAction(runtime);
+      if (result.presentationEvents.length > 0) {
+        queuePresentationEvents(result.presentationEvents, "Enemy", result.nextState, runtime);
+      } else {
+        dispatch(replaceRuntimeState(result.nextState));
+      }
+    }, ENEMY_PHASE_STEP_DELAY_MS);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [dispatch, isBoardAnimating, pendingRuntimeState, presentationQueue.length, runtime]);
 
   return (
     <main className="app-shell">
@@ -128,21 +203,67 @@ export function BattleScreen() {
             </p>
           </div>
           <div className="battle-actions">
-            <button type="button" disabled={!canUndo(runtime)} onClick={() => dispatch(undoAction())}>
+            <button
+              type="button"
+              disabled={isPlayerBannerBlocking || !canUndo(runtime)}
+              onClick={() => dispatch(undoAction())}
+            >
               Undo
             </button>
-            <button type="button" onClick={handleReset}>
+            <button type="button" disabled={isPlayerBannerBlocking} onClick={handleReset}>
               Reset
             </button>
-            <button type="button" onClick={handleEndPhase}>
+            <button type="button" disabled={isPlayerBannerBlocking} onClick={handleEndPhase}>
               End Phase
             </button>
           </div>
         </header>
 
         <div className="layout">
+          <aside className="debug-sidebar">
+            <section className="card debug-card">
+              <h2>Presentation Log</h2>
+              <p>
+                Queue: {presentationQueue.length > 0 ? `${presentationQueue.length} event(s)` : "idle"}
+              </p>
+              {presentationQueue.length > 0 ? (
+                <div className="debug-block">
+                  <p className="debug-label">Pending</p>
+                  <ol className="debug-list">
+                    {presentationQueue.map((event, index) => (
+                      <li key={`${index}-${formatPresentationEvent(event)}`}>{formatPresentationEvent(event)}</li>
+                    ))}
+                  </ol>
+                </div>
+              ) : (
+                <p>No active presentation queue.</p>
+              )}
+              <div className="debug-block">
+                <p className="debug-label">Recent</p>
+                {presentationLog.length > 0 ? (
+                  <ol className="debug-list">
+                    {presentationLog.map((entry, index) => (
+                      <li key={`${index}-${entry}`}>{entry}</li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p>No presentation events logged yet.</p>
+                )}
+              </div>
+            </section>
+          </aside>
+
           <div className="map-card">
+            {showPhaseBanner ? (
+              <div
+                key={`${phaseBanner.phase}-${phaseBanner.key}`}
+                className={`phase-banner phase-banner-${phaseBanner.phase}`}
+              >
+                <span>{phaseBanner.phase === "player" ? "Player Phase" : "Enemy Phase"}</span>
+              </div>
+            ) : null}
             <BattleCanvas
+              runtime={runtime}
               tiles={runtime.map.tiles}
               width={runtime.map.width}
               height={runtime.map.height}
@@ -153,6 +274,10 @@ export function BattleScreen() {
               moveHighlightTiles={moveHighlightTiles}
               attackHighlightTiles={attackHighlightTiles}
               enemyThreatOutlineTiles={enemyThreatOutlineTiles}
+              presentationQueue={presentationQueue}
+              grayLockUnitIds={grayLockUnitIds}
+              onAnimationStateChange={setIsBoardAnimating}
+              onPresentationComplete={handlePresentationComplete}
               onTileClick={handleTileClick}
               onTileHover={setHoveredTile}
               onCancel={handleCancel}
@@ -229,7 +354,7 @@ export function BattleScreen() {
                     <p>{selectedUnit.hasActed ? "Action spent" : "Action available"}</p>
                     <button
                       type="button"
-                      disabled={selectedUnit.hasActed}
+                      disabled={isPlayerBannerBlocking || selectedUnit.hasActed}
                       onClick={handleWait}
                     >
                       Wait
@@ -252,7 +377,11 @@ export function BattleScreen() {
                   <p>
                     Counter: {combatPreview.defenderCanCounter ? `${combatPreview.defenderDamage} damage` : "None"}
                   </p>
-                  <button type="button" onClick={() => handleAttack(previewTarget.id)}>
+                  <button
+                    type="button"
+                    disabled={isPlayerBannerBlocking}
+                    onClick={() => handleAttack(previewTarget.id)}
+                  >
                     Attack Target
                   </button>
                 </>
@@ -272,15 +401,15 @@ export function BattleScreen() {
                     <div className="command-actions">
                       <button
                         type="button"
-                        disabled={attackableTargets.length === 0}
+                        disabled={isPlayerBannerBlocking || attackableTargets.length === 0}
                         onClick={() => setPendingAction("chooseAttackTarget")}
                       >
                         Attack
                       </button>
-                      <button type="button" onClick={handleWait}>
+                      <button type="button" disabled={isPlayerBannerBlocking} onClick={handleWait}>
                         Wait
                       </button>
-                      <button type="button" onClick={clearStagedAction}>
+                      <button type="button" disabled={isPlayerBannerBlocking} onClick={clearStagedAction}>
                         Cancel
                       </button>
                     </div>
@@ -288,10 +417,14 @@ export function BattleScreen() {
                     <>
                       <p>Choose a red target, or go back and pick Wait.</p>
                       <div className="command-actions">
-                        <button type="button" onClick={() => setPendingAction("chooseAction")}>
+                        <button
+                          type="button"
+                          disabled={isPlayerBannerBlocking}
+                          onClick={() => setPendingAction("chooseAction")}
+                        >
                           Back
                         </button>
-                        <button type="button" onClick={clearStagedAction}>
+                        <button type="button" disabled={isPlayerBannerBlocking} onClick={clearStagedAction}>
                           Cancel
                         </button>
                       </div>
@@ -312,6 +445,10 @@ export function BattleScreen() {
   );
 
   function handleTileClick(position: Position) {
+    if (isPlayerBannerBlocking) {
+      return;
+    }
+
     const clickedUnit = getUnitAtPosition(units, position);
 
     if (pendingAction === "chooseAttackTarget" && selectedUnit && clickedUnit?.team !== selectedUnit.team) {
@@ -320,6 +457,12 @@ export function BattleScreen() {
     }
 
     if (clickedUnit && clickedUnit.team === runtime.phase) {
+      if (selectedUnit?.id === clickedUnit.id) {
+        clearStagedAction();
+        clearSelection();
+        return;
+      }
+
       clearStagedAction();
       dispatch(dispatchGameAction({ type: "selectUnit", unitId: clickedUnit.id }));
       return;
@@ -345,59 +488,70 @@ export function BattleScreen() {
   }
 
   function handleAttack(defenderId?: string) {
-    if (!selectedUnit || !stagedDestination || !defenderId) {
+    if (isPlayerBannerBlocking || !selectedUnit || !defenderId) {
       return;
     }
 
-    dispatch(
-      dispatchGameAction({
-        type: "moveUnit",
-        unitId: selectedUnit.id,
-        destination: stagedDestination,
-      }),
-    );
-    dispatch(
-      dispatchGameAction({
+    const result = buildPlayerActionPresentation(
+      runtime,
+      {
         type: "attackUnit",
         attackerId: selectedUnit.id,
         defenderId,
-      }),
+      },
+      stagedDestination,
     );
+    if (result.presentationEvents.length > 0) {
+      queuePresentationEvents(result.presentationEvents, "Player", result.nextState, runtime);
+    } else {
+      dispatch(replaceRuntimeState(result.nextState));
+    }
     clearStagedAction();
   }
 
   function handleWait() {
-    if (!selectedUnit) {
+    if (isPlayerBannerBlocking || !selectedUnit) {
       return;
     }
 
-    if (stagedDestination) {
-      dispatch(
-        dispatchGameAction({
-          type: "moveUnit",
-          unitId: selectedUnit.id,
-          destination: stagedDestination,
-        }),
-      );
+    const result = buildPlayerActionPresentation(
+      runtime,
+      { type: "waitUnit", unitId: selectedUnit.id },
+      stagedDestination,
+    );
+    if (result.presentationEvents.length > 0) {
+      queuePresentationEvents(result.presentationEvents, "Player", result.nextState, runtime);
+    } else {
+      dispatch(replaceRuntimeState(result.nextState));
     }
-
-    dispatch(dispatchGameAction({ type: "waitUnit", unitId: selectedUnit.id }));
     clearStagedAction();
   }
 
   function handleReset() {
+    if (isPlayerBannerBlocking) {
+      return;
+    }
+
     clearStagedAction();
     clearSelection();
     dispatch(resetDemoState());
   }
 
   function handleEndPhase() {
+    if (isPlayerBannerBlocking) {
+      return;
+    }
+
     clearStagedAction();
     clearSelection();
     dispatch(dispatchGameAction({ type: "endPhase" }));
   }
 
   function handleCancel() {
+    if (isPlayerBannerBlocking) {
+      return;
+    }
+
     if (pendingAction === "chooseAttackTarget") {
       setPendingAction("chooseAction");
       return;
@@ -420,6 +574,34 @@ export function BattleScreen() {
 
   function clearSelection() {
     dispatch(dispatchGameAction({ type: "selectUnit", unitId: undefined }));
+  }
+
+  function queuePresentationEvents(
+    events: PresentationEvent[],
+    source: "Player" | "Enemy",
+    nextState: RuntimeGameState,
+    previousState: RuntimeGameState,
+  ) {
+    setPendingRuntimeState(nextState);
+    setPresentationQueue(events);
+    setGrayLockUnitIds(getGrayLockUnitIds(previousState, nextState));
+    setPresentationLog((current) =>
+      [
+        `${source} queued ${events.length} event(s)`,
+        ...events.map((event) => `${source}: ${formatPresentationEvent(event)}`),
+        ...current,
+      ].slice(0, 18),
+    );
+  }
+
+  function handlePresentationComplete() {
+    if (pendingRuntimeState) {
+      dispatch(replaceRuntimeState(pendingRuntimeState));
+    }
+    setPresentationLog((current) => ["Queue complete", ...current].slice(0, 18));
+    setGrayLockUnitIds([]);
+    setPendingRuntimeState(undefined);
+    setPresentationQueue([]);
   }
 }
 
@@ -456,4 +638,41 @@ function uniquePositions(positions: Position[]): Position[] {
   return Array.from(
     new Map(positions.map((position) => [`${position.x},${position.y}`, position])).values(),
   );
+}
+
+function formatPresentationEvent(event: PresentationEvent): string {
+  if (event.type === "move") {
+    return `${event.unitId} move ${event.from.x},${event.from.y} -> ${event.to.x},${event.to.y}`;
+  }
+
+  if (event.type === "pause") {
+    return `${event.unitId} pause ${event.durationMs}ms`;
+  }
+
+  return `${event.attackerId} attacks ${event.defenderId} (${event.defenderFromHp} -> ${event.defenderToHp}${
+    event.defenderCanCounter
+      ? `, counter ${event.attackerFromHp} -> ${event.attackerToHp}`
+      : ", no counter"
+  })`;
+}
+
+function getGrayLockUnitIds(
+  previousState: RuntimeGameState,
+  nextState: RuntimeGameState,
+): string[] {
+  const lockedIds = new Set(
+    Object.values(previousState.units)
+      .filter((unit) => unit.hasActed)
+      .map((unit) => unit.id),
+  );
+
+  if (previousState.phase !== nextState.phase) {
+    for (const unit of Object.values(previousState.units)) {
+      if (unit.team === previousState.phase && !unit.isDefeated) {
+        lockedIds.add(unit.id);
+      }
+    }
+  }
+
+  return Array.from(lockedIds);
 }

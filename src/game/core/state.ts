@@ -3,6 +3,7 @@ import type {
   BattleMapDefinition,
   GameAction,
   Position,
+  PresentationEvent,
   RuntimeGameState,
   RuntimeSnapshot,
   RulesConfig,
@@ -21,6 +22,8 @@ const defaultRules: RulesConfig = {
     { speedDifference: 3, bonusDamage: 1 },
   ],
 };
+
+const MOVE_TO_ATTACK_PAUSE_MS = 360;
 
 export function createInitialRuntimeState(map: BattleMapDefinition): RuntimeGameState {
   const units = Object.fromEntries(
@@ -135,7 +138,7 @@ export function applyAction(state: RuntimeGameState, action: GameAction): Runtim
         return maybeAdvancePhase(draft);
       });
     case "endPhase":
-      return commitState(state, (draft) => resolvePhaseTransition(draft));
+      return commitState(state, (draft) => advancePhase(draft));
     default:
       return state;
   }
@@ -208,7 +211,7 @@ function maybeAdvancePhase(state: RuntimeGameState): RuntimeGameState {
   );
   const allActed = activeUnits.every((unit) => unit.hasActed);
 
-  return allActed ? resolvePhaseTransition(state) : state;
+  return allActed ? advancePhase(state) : state;
 }
 
 function advancePhase(state: RuntimeGameState): RuntimeGameState {
@@ -223,53 +226,60 @@ function advancePhase(state: RuntimeGameState): RuntimeGameState {
     units: Object.fromEntries(
       Object.entries(state.units).map(([id, unit]) => [
         id,
-        unit.team === nextPhase
-          ? {
-              ...unit,
-              hasActed: false,
-              hasMoved: false,
-            }
-          : unit,
+        {
+          ...unit,
+          hasActed: false,
+          hasMoved: false,
+        },
       ]),
     ),
   };
 }
 
-function resolvePhaseTransition(state: RuntimeGameState): RuntimeGameState {
-  const advancedState = advancePhase(state);
-  return advancedState.phase === "enemy" ? resolveEnemyPhase(advancedState) : advancedState;
+export function processNextEnemyAction(state: RuntimeGameState): RuntimeGameState {
+  return previewNextEnemyAction(state).nextState;
 }
 
-function resolveEnemyPhase(state: RuntimeGameState): RuntimeGameState {
-  let currentState = cloneRuntimeState(state);
-  currentState.actionHistory = state.actionHistory;
-
-  const enemyUnits = Object.values(currentState.units)
-    .filter((unit) => unit.team === "enemy" && !unit.isDefeated)
-    .sort((left, right) => left.id.localeCompare(right.id));
-
-  for (const enemyUnit of enemyUnits) {
-    const activeEnemy = currentState.units[enemyUnit.id];
-    if (!activeEnemy || activeEnemy.hasActed || activeEnemy.isDefeated) {
-      continue;
-    }
-
-    currentState = executeEnemyTurn(currentState, activeEnemy.id);
+export function previewNextEnemyAction(
+  state: RuntimeGameState,
+): { nextState: RuntimeGameState; presentationEvents: PresentationEvent[] } {
+  if (state.phase !== "enemy") {
+    return { nextState: state, presentationEvents: [] };
   }
 
-  return advancePhase(currentState);
+  const nextEnemy = Object.values(state.units)
+    .filter((unit) => unit.team === "enemy" && !unit.isDefeated && !unit.hasActed)
+    .sort((left, right) => left.id.localeCompare(right.id))[0];
+
+  if (!nextEnemy) {
+    return { nextState: advancePhase(state), presentationEvents: [] };
+  }
+
+  const result = executeEnemyTurnWithPresentation(state, nextEnemy.id);
+  const nextState = result.nextState;
+  const remainingEnemy = Object.values(nextState.units).some(
+    (unit) => unit.team === "enemy" && !unit.isDefeated && !unit.hasActed,
+  );
+
+  return {
+    nextState: remainingEnemy ? nextState : advancePhase(nextState),
+    presentationEvents: result.presentationEvents,
+  };
 }
 
-function executeEnemyTurn(state: RuntimeGameState, enemyUnitId: string): RuntimeGameState {
+function executeEnemyTurnWithPresentation(
+  state: RuntimeGameState,
+  enemyUnitId: string,
+): { nextState: RuntimeGameState; presentationEvents: PresentationEvent[] } {
   const enemy = state.units[enemyUnitId];
   if (!enemy || enemy.isDefeated || enemy.hasActed) {
-    return state;
+    return { nextState: state, presentationEvents: [] };
   }
 
   const attackOptions = getUnitAttackOptions(state, enemyUnitId);
   if (attackOptions.length > 0) {
     const bestAttack = attackOptions.sort(compareAttackOptions)[0];
-    return resolveAttack(state, enemyUnitId, bestAttack.id);
+    return resolveAttackWithPresentation(state, enemyUnitId, bestAttack.id, []);
   }
 
   const candidateDestinations = getReachablePositions(state, enemyUnitId);
@@ -279,10 +289,11 @@ function executeEnemyTurn(state: RuntimeGameState, enemyUnitId: string): Runtime
   for (const destination of candidateDestinations) {
     const movedState = resolveMove(state, enemyUnitId, destination);
     const movedAttackOptions = getUnitAttackOptions(movedState, enemyUnitId);
+    const moveEvents = createMovePresentationEvents(state, movedState, enemyUnitId);
 
     if (movedAttackOptions.length > 0) {
       const bestAttack = movedAttackOptions.sort(compareAttackOptions)[0];
-      return resolveAttack(movedState, enemyUnitId, bestAttack.id);
+      return resolveAttackWithPresentation(movedState, enemyUnitId, bestAttack.id, moveEvents);
     }
 
     const score = scorePosition(movedState, enemyUnitId);
@@ -292,7 +303,10 @@ function executeEnemyTurn(state: RuntimeGameState, enemyUnitId: string): Runtime
     }
   }
 
-  return resolveWait(bestState, enemyUnitId);
+  return {
+    nextState: resolveWait(bestState, enemyUnitId),
+    presentationEvents: createMovePresentationEvents(state, bestState, enemyUnitId),
+  };
 }
 
 function compareAttackOptions(left: UnitState, right: UnitState): number {
@@ -337,18 +351,25 @@ function resolveMove(state: RuntimeGameState, unitId: string, destination: Posit
   return nextState;
 }
 
-function resolveAttack(state: RuntimeGameState, attackerId: string, defenderId: string): RuntimeGameState {
+function resolveAttackWithPresentation(
+  state: RuntimeGameState,
+  attackerId: string,
+  defenderId: string,
+  existingEvents: PresentationEvent[],
+): { nextState: RuntimeGameState; presentationEvents: PresentationEvent[] } {
   const nextState = cloneRuntimeState(state);
   const attacker = nextState.units[attackerId];
   const defender = nextState.units[defenderId];
 
   if (!attacker || !defender || !canUnitAttackTarget(nextState, attackerId, defenderId)) {
-    return nextState;
+    return { nextState, presentationEvents: existingEvents };
   }
 
+  const attackerFromHp = attacker.currentHp;
+  const defenderFromHp = defender.currentHp;
   const preview = getCombatPreview(nextState, attackerId, defenderId);
   if (preview.attackerDamage <= 0) {
-    return nextState;
+    return { nextState, presentationEvents: existingEvents };
   }
 
   defender.currentHp = Math.max(0, defender.currentHp - preview.attackerDamage);
@@ -366,7 +387,22 @@ function resolveAttack(state: RuntimeGameState, attackerId: string, defenderId: 
   attacker.hasMoved = true;
   attacker.hasActed = true;
   nextState.selectedUnitId = undefined;
-  return nextState;
+  return {
+    nextState,
+    presentationEvents: [
+      ...withMoveAttackPause(existingEvents, attackerId),
+      {
+        type: "combat",
+        attackerId,
+        defenderId,
+        defenderCanCounter: preview.defenderCanCounter,
+        attackerFromHp,
+        attackerToHp: attacker.currentHp,
+        defenderFromHp,
+        defenderToHp: defender.currentHp,
+      },
+    ],
+  };
 }
 
 function resolveWait(state: RuntimeGameState, unitId: string): RuntimeGameState {
@@ -382,13 +418,63 @@ function resolveWait(state: RuntimeGameState, unitId: string): RuntimeGameState 
   return nextState;
 }
 
+export function buildPlayerActionPresentation(
+  previousState: RuntimeGameState,
+  action: Extract<GameAction, { type: "attackUnit" | "waitUnit" }>,
+  stagedDestination?: Position,
+): { nextState: RuntimeGameState; presentationEvents: PresentationEvent[] } {
+  const presentationEvents: PresentationEvent[] = [];
+  let nextState = previousState;
+
+  if (stagedDestination) {
+    const unitId = action.type === "attackUnit" ? action.attackerId : action.unitId;
+    const movedState = applyAction(nextState, {
+      type: "moveUnit",
+      unitId,
+      destination: stagedDestination,
+    });
+    presentationEvents.push(...createMovePresentationEvents(nextState, movedState, unitId));
+    nextState = movedState;
+  }
+
+  if (action.type === "attackUnit") {
+    const attacker = nextState.units[action.attackerId];
+    const defender = nextState.units[action.defenderId];
+    if (attacker && defender && canUnitAttackTarget(nextState, attacker.id, defender.id)) {
+      const preview = getCombatPreview(nextState, attacker.id, defender.id);
+      if (preview.attackerDamage > 0) {
+        presentationEvents.push({
+          type: "combat",
+          attackerId: attacker.id,
+          defenderId: defender.id,
+          defenderCanCounter: preview.defenderCanCounter,
+          attackerFromHp: attacker.currentHp,
+          attackerToHp: Math.max(0, attacker.currentHp - preview.defenderDamage),
+          defenderFromHp: defender.currentHp,
+          defenderToHp: Math.max(0, defender.currentHp - preview.attackerDamage),
+        });
+      }
+    }
+  }
+
+  nextState = applyAction(nextState, action);
+  return { nextState, presentationEvents };
+}
+
 export function getReachablePositions(state: RuntimeGameState, unitId: string): Position[] {
   const unit = state.units[unitId];
   if (!unit || unit.isDefeated || unit.hasActed || unit.hasMoved) {
     return [];
   }
 
-  return getMovementPreviewPositions(state, unitId);
+  return getMovementPreviewPositions(state, unitId).filter((position) => {
+    if (position.x === unit.position.x && position.y === unit.position.y) {
+      return false;
+    }
+
+    const occupant = getUnitAtPosition(state, position);
+    return !occupant;
+  });
 }
 
 export function getMovementPreviewPositions(state: RuntimeGameState, unitId: string): Position[] {
@@ -524,6 +610,10 @@ export function getThreatenedPositions(state: RuntimeGameState, unitId: string):
   return Array.from(threatenedPositions.values()).sort(sortPositions);
 }
 
+export function isUnitInjured(state: RuntimeGameState, unit: UnitState): boolean {
+  return unit.currentHp < Math.ceil(unit.stats.maxHp * state.rules.injuryThresholdRatio);
+}
+
 export function canUnitMoveTo(state: RuntimeGameState, unitId: string, destination: Position): boolean {
   const unit = state.units[unitId];
   if (!unit || unit.isDefeated || unit.hasActed || unit.hasMoved) {
@@ -572,6 +662,132 @@ export function getUnitAtPosition(state: RuntimeGameState, position: Position): 
     (unit) =>
       !unit.isDefeated && unit.position.x === position.x && unit.position.y === position.y,
   );
+}
+
+function createMovePresentationEvents(
+  previousState: RuntimeGameState,
+  nextState: RuntimeGameState,
+  unitId: string,
+): PresentationEvent[] {
+  const previousUnit = previousState.units[unitId];
+  const nextUnit = nextState.units[unitId];
+
+  if (
+    !previousUnit ||
+    !nextUnit ||
+    (previousUnit.position.x === nextUnit.position.x &&
+      previousUnit.position.y === nextUnit.position.y)
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      type: "move",
+      unitId,
+      team: nextUnit.team,
+      from: previousUnit.position,
+      to: nextUnit.position,
+      path: getMovementPath(previousState, unitId, nextUnit.position),
+    },
+  ];
+}
+
+function withMoveAttackPause(events: PresentationEvent[], unitId: string): PresentationEvent[] {
+  const lastEvent = events[events.length - 1];
+  if (lastEvent?.type !== "move" || lastEvent.unitId !== unitId) {
+    return events;
+  }
+
+  return [
+    ...events,
+    {
+      type: "pause",
+      unitId,
+      durationMs: MOVE_TO_ATTACK_PAUSE_MS,
+    },
+  ];
+}
+
+function getMovementPath(
+  state: RuntimeGameState,
+  unitId: string,
+  destination: Position,
+): Position[] {
+  const unit = state.units[unitId];
+  if (!unit) {
+    return [destination];
+  }
+
+  const startKey = toPositionKey(unit.position);
+  const destinationKey = toPositionKey(destination);
+  const queue: Position[] = [unit.position];
+  const visited = new Set<string>([startKey]);
+  const previousByKey = new Map<string, string>();
+  const positionsByKey = new Map<string, Position>([[startKey, unit.position]]);
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) {
+      continue;
+    }
+
+    const currentKey = toPositionKey(current);
+    if (currentKey === destinationKey) {
+      break;
+    }
+
+    for (const neighbor of getAdjacentPositions(current)) {
+      if (!isPositionInBounds(state, neighbor)) {
+        continue;
+      }
+
+      const neighborKey = toPositionKey(neighbor);
+      if (visited.has(neighborKey)) {
+        continue;
+      }
+
+      if (
+        neighborKey !== destinationKey &&
+        neighborKey !== startKey &&
+        getUnitAtPosition(state, neighbor)
+      ) {
+        continue;
+      }
+
+      visited.add(neighborKey);
+      previousByKey.set(neighborKey, currentKey);
+      positionsByKey.set(neighborKey, neighbor);
+      queue.push(neighbor);
+    }
+  }
+
+  if (!visited.has(destinationKey)) {
+    return [unit.position, destination];
+  }
+
+  const reversedPath: Position[] = [];
+  let currentKey = destinationKey;
+
+  while (true) {
+    const position = positionsByKey.get(currentKey);
+    if (position) {
+      reversedPath.push(position);
+    }
+
+    if (currentKey === startKey) {
+      break;
+    }
+
+    const previousKey = previousByKey.get(currentKey);
+    if (!previousKey) {
+      return [unit.position, destination];
+    }
+
+    currentKey = previousKey;
+  }
+
+  return reversedPath.reverse();
 }
 
 function getAdjacentPositions(position: Position): Position[] {
