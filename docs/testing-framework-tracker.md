@@ -34,6 +34,21 @@ Do not log:
 
 ## Current Test Surface
 
+## Iteration Workflow
+
+- Fast feedback during implementation:
+  - `npm run test:watch`
+- Checkpoint validation after a meaningful batch of changes:
+  - `npm run build`
+- Browser/canvas validation after meaningful UI or animation changes:
+  - `npm run test:e2e`
+
+### How We Use This
+
+- `test:watch` is the background safety net for rules and React interaction regressions while iterating.
+- `build` is the main type/integration checkpoint before closing out a chunk of work.
+- `test:e2e` is not intended to run continuously; it is the browser-level pass for canvas flows, sequencing, and other real interaction behavior.
+
 ### Rules
 
 - movement through allies but blocked final destination

@@ -139,6 +139,7 @@ export function BattleScreen() {
       : undefined;
   const showingSelectedRanges = Boolean(selectedUnit);
   const moveHighlightTiles = showingSelectedRanges ? reachableTiles : hoveredMovePreviewTiles;
+  const moveHighlightTeam = showingSelectedRanges ? selectedUnit?.team : hoveredUnit?.team;
   const selectedAttackPreviewTiles = useMemo(() => {
     if (!selectedUnit) {
       return [];
@@ -314,10 +315,11 @@ export function BattleScreen() {
               units={units}
               hoveredTile={hoveredTile}
               selectedTile={selectedUnit?.position}
-              stagedTile={stagedDestination}
-              moveHighlightTiles={moveHighlightTiles}
-              attackHighlightTiles={attackHighlightTiles}
-              hoveredMovePath={hoveredMovePath}
+        stagedTile={stagedDestination}
+        moveHighlightTiles={moveHighlightTiles}
+        moveHighlightTeam={moveHighlightTeam}
+        attackHighlightTiles={attackHighlightTiles}
+        hoveredMovePath={hoveredMovePath}
               enemyThreatOutlineTiles={enemyThreatOutlineTiles}
               presentationQueue={presentationQueue}
               grayLockUnitIds={grayLockUnitIds}

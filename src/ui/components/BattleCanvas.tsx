@@ -15,6 +15,7 @@ type BattleCanvasProps = {
   selectedTile?: Position;
   stagedTile?: Position;
   moveHighlightTiles: Position[];
+  moveHighlightTeam?: Team;
   attackHighlightTiles: Position[];
   hoveredMovePath: Position[];
   enemyThreatOutlineTiles: Position[];
@@ -71,6 +72,7 @@ export function BattleCanvas(props: BattleCanvasProps) {
     selectedTile,
     stagedTile,
     moveHighlightTiles,
+    moveHighlightTeam,
     attackHighlightTiles,
     hoveredMovePath,
     enemyThreatOutlineTiles,
@@ -229,6 +231,7 @@ export function BattleCanvas(props: BattleCanvasProps) {
       selectedTile,
       stagedTile,
       moveHighlightSet,
+      moveHighlightTeam,
       attackHighlightSet,
       hoveredMovePath,
       enemyThreatOutlineSet,
@@ -253,6 +256,7 @@ export function BattleCanvas(props: BattleCanvasProps) {
     hoveredTile,
     metrics,
     moveHighlightSet,
+    moveHighlightTeam,
     presentationQueue,
     runtime,
     selectedTile,
@@ -301,6 +305,7 @@ function drawBoard(
     selectedTile?: Position;
     stagedTile?: Position;
     moveHighlightSet: Set<string>;
+    moveHighlightTeam?: Team;
     attackHighlightSet: Set<string>;
     hoveredMovePath: Position[];
     enemyThreatOutlineSet: Set<string>;
@@ -323,6 +328,7 @@ function drawBoard(
     selectedTile,
     stagedTile,
     moveHighlightSet,
+    moveHighlightTeam,
     attackHighlightSet,
     hoveredMovePath,
     enemyThreatOutlineSet,
@@ -352,7 +358,7 @@ function drawBoard(
       context.stroke();
 
       if (moveHighlightSet.has(key)) {
-        context.fillStyle = "rgba(37, 92, 176, 0.24)";
+        context.fillStyle = getMoveHighlightColor(moveHighlightTeam);
         roundRect(context, px + 4, py + 4, metrics.tileSize - 8, metrics.tileSize - 8, 10);
         context.fill();
       }
@@ -781,6 +787,14 @@ function getTerrainColor(terrain: TileDefinition["terrain"]): string {
     default:
       return "#d4bc82";
   }
+}
+
+function getMoveHighlightColor(team: Team | undefined): string {
+  if (team === "enemy") {
+    return "rgba(245, 180, 60, 0.28)";
+  }
+
+  return "rgba(37, 92, 176, 0.24)";
 }
 
 function getTeamColor(team: Team): string {
