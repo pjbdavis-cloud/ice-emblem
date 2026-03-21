@@ -11,28 +11,38 @@ function createDefaultSpriteSet(classId: string, team: Team): UnitSpriteSet {
   return {
     idle: {
       src: `/sprites/units/${classId}/${team}-idle.png`,
-      frameCount: 1,
+      frameCount: 3,
       frameDurationMs: 240,
+      frameWidth: 32,
+      frameHeight: 32,
     },
     walk: {
       src: `/sprites/units/${classId}/${team}-walk.png`,
       frameCount: 4,
       frameDurationMs: 120,
+      frameWidth: 32,
+      frameHeight: 32,
     },
     attack: {
       src: `/sprites/units/${classId}/${team}-attack.png`,
       frameCount: 3,
       frameDurationMs: 110,
+      frameWidth: 32,
+      frameHeight: 32,
     },
     hurt: {
       src: `/sprites/units/${classId}/${team}-hurt.png`,
       frameCount: 2,
       frameDurationMs: 140,
+      frameWidth: 32,
+      frameHeight: 32,
     },
     death: {
       src: `/sprites/units/${classId}/${team}-death.png`,
       frameCount: 4,
       frameDurationMs: 120,
+      frameWidth: 32,
+      frameHeight: 32,
     },
   };
 }
@@ -50,10 +60,7 @@ const byClassAndTeam = Object.fromEntries(
 if (byClassAndTeam.lord?.player?.idle) {
   byClassAndTeam.lord.player.idle = {
     ...byClassAndTeam.lord.player.idle,
-    frameCount: 3,
     frameDurationMs: 180,
-    frameWidth: 32,
-    frameHeight: 32,
   };
 }
 
