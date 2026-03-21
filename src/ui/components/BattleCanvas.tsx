@@ -16,6 +16,7 @@ type BattleCanvasProps = {
   stagedTile?: Position;
   moveHighlightTiles: Position[];
   attackHighlightTiles: Position[];
+  hoveredMovePath: Position[];
   enemyThreatOutlineTiles: Position[];
   presentationQueue: PresentationEvent[];
   grayLockUnitIds: string[];
@@ -71,6 +72,7 @@ export function BattleCanvas(props: BattleCanvasProps) {
     stagedTile,
     moveHighlightTiles,
     attackHighlightTiles,
+    hoveredMovePath,
     enemyThreatOutlineTiles,
     presentationQueue,
     grayLockUnitIds,
@@ -228,6 +230,7 @@ export function BattleCanvas(props: BattleCanvasProps) {
       stagedTile,
       moveHighlightSet,
       attackHighlightSet,
+      hoveredMovePath,
       enemyThreatOutlineSet,
       metrics,
       activePresentation,
@@ -241,6 +244,7 @@ export function BattleCanvas(props: BattleCanvasProps) {
     activePresentation,
     animationClock,
     attackHighlightSet,
+    hoveredMovePath,
     enemyThreatOutlineSet,
     grayLockUnitIds,
     pendingDefeatedUnitIds,
@@ -262,6 +266,7 @@ export function BattleCanvas(props: BattleCanvasProps) {
     <div ref={wrapperRef} className="battle-canvas-shell">
       <canvas
         ref={canvasRef}
+        data-testid="battle-canvas"
         className="battle-canvas"
         style={{ width: metrics.width, height: metrics.height }}
         onClick={(event) => {
@@ -297,6 +302,7 @@ function drawBoard(
     stagedTile?: Position;
     moveHighlightSet: Set<string>;
     attackHighlightSet: Set<string>;
+    hoveredMovePath: Position[];
     enemyThreatOutlineSet: Set<string>;
     metrics: BoardMetrics;
     activePresentation?: ActivePresentation;
@@ -318,6 +324,7 @@ function drawBoard(
     stagedTile,
     moveHighlightSet,
     attackHighlightSet,
+    hoveredMovePath,
     enemyThreatOutlineSet,
     metrics,
     activePresentation,
@@ -386,6 +393,10 @@ function drawBoard(
       context.font = `${Math.max(10, metrics.tileSize * 0.16)}px Trebuchet MS`;
       context.fillText(`${x},${y}`, px + 8, py + 18);
     }
+  }
+
+  if (hoveredMovePath.length > 1) {
+    drawMovePathArrow(context, hoveredMovePath, metrics.tileSize);
   }
 
   for (const unit of units) {
@@ -816,6 +827,87 @@ function drawThreatBoundary(
   if (!threatSet.has(toPositionKey({ x: x - 1, y }))) {
     drawLine(context, left, bottom, left, top);
   }
+}
+
+function drawMovePathArrow(
+  context: CanvasRenderingContext2D,
+  path: Position[],
+  tileSize: number,
+) {
+  if (path.length < 2) {
+    return;
+  }
+
+  const points = path.map((position) => ({
+    x: position.x * tileSize + tileSize / 2,
+    y: position.y * tileSize + tileSize / 2,
+  }));
+  const end = points[points.length - 1];
+  const previous = points[points.length - 2];
+  const angle = Math.atan2(end.y - previous.y, end.x - previous.x);
+  const lineEndInset = Math.max(10, tileSize * 0.18);
+  const lineEnd = {
+    x: end.x - Math.cos(angle) * lineEndInset,
+    y: end.y - Math.sin(angle) * lineEndInset,
+  };
+
+  context.save();
+  context.strokeStyle = "rgba(52, 122, 235, 0.92)";
+  context.lineWidth = Math.max(6, tileSize * 0.16);
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.beginPath();
+  context.moveTo(points[0].x, points[0].y);
+
+  for (let index = 1; index < points.length - 1; index += 1) {
+    context.lineTo(points[index].x, points[index].y);
+  }
+  context.lineTo(lineEnd.x, lineEnd.y);
+
+  context.stroke();
+
+  context.strokeStyle = "rgba(214, 234, 255, 0.85)";
+  context.lineWidth = Math.max(2.5, tileSize * 0.055);
+  context.beginPath();
+  context.moveTo(points[0].x, points[0].y);
+
+  for (let index = 1; index < points.length - 1; index += 1) {
+    context.lineTo(points[index].x, points[index].y);
+  }
+  context.lineTo(lineEnd.x, lineEnd.y);
+
+  context.stroke();
+
+  const arrowLength = Math.max(14, tileSize * 0.34);
+  const arrowWidth = Math.max(10, tileSize * 0.24);
+  const tipX = end.x;
+  const tipY = end.y;
+  const backX = tipX - Math.cos(angle) * arrowLength;
+  const backY = tipY - Math.sin(angle) * arrowLength;
+  const normalX = -Math.sin(angle);
+  const normalY = Math.cos(angle);
+  const notchX = backX + Math.cos(angle) * (arrowLength * 0.2);
+  const notchY = backY + Math.sin(angle) * (arrowLength * 0.2);
+
+  context.fillStyle = "rgba(52, 122, 235, 0.98)";
+  context.beginPath();
+  context.moveTo(tipX, tipY);
+  context.lineTo(backX + normalX * arrowWidth, backY + normalY * arrowWidth);
+  context.lineTo(notchX, notchY);
+  context.lineTo(backX - normalX * arrowWidth, backY - normalY * arrowWidth);
+  context.closePath();
+  context.fill();
+
+  context.strokeStyle = "rgba(214, 234, 255, 0.78)";
+  context.lineWidth = Math.max(2, tileSize * 0.04);
+  context.beginPath();
+  context.moveTo(tipX, tipY);
+  context.lineTo(backX + normalX * arrowWidth, backY + normalY * arrowWidth);
+  context.lineTo(notchX, notchY);
+  context.lineTo(backX - normalX * arrowWidth, backY - normalY * arrowWidth);
+  context.closePath();
+  context.stroke();
+  context.restore();
 }
 
 function drawLine(

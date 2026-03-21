@@ -520,6 +520,7 @@ export function getMovementPreviewPositions(state: RuntimeGameState, unitId: str
       if (occupant) {
         if (occupant.team === unit.team) {
           reachable.set(key, neighbor);
+          queue.push({ position: neighbor, steps: nextSteps });
         }
         continue;
       }
@@ -688,7 +689,7 @@ function createMovePresentationEvents(
       team: nextUnit.team,
       from: previousUnit.position,
       to: nextUnit.position,
-      path: getMovementPath(previousState, unitId, nextUnit.position),
+      path: getMovementPathPreview(previousState, unitId, nextUnit.position),
     },
   ];
 }
@@ -709,7 +710,7 @@ function withMoveAttackPause(events: PresentationEvent[], unitId: string): Prese
   ];
 }
 
-function getMovementPath(
+export function getMovementPathPreview(
   state: RuntimeGameState,
   unitId: string,
   destination: Position,
@@ -721,10 +722,10 @@ function getMovementPath(
 
   const startKey = toPositionKey(unit.position);
   const destinationKey = toPositionKey(destination);
-  const queue: Position[] = [unit.position];
-  const visited = new Set<string>([startKey]);
-  const previousByKey = new Map<string, string>();
-  const positionsByKey = new Map<string, Position>([[startKey, unit.position]]);
+  const queue: Position[] = [destination];
+  const visited = new Set<string>([destinationKey]);
+  const distanceByKey = new Map<string, number>([[destinationKey, 0]]);
+  const positionsByKey = new Map<string, Position>([[destinationKey, destination]]);
 
   while (queue.length > 0) {
     const current = queue.shift();
@@ -733,7 +734,7 @@ function getMovementPath(
     }
 
     const currentKey = toPositionKey(current);
-    if (currentKey === destinationKey) {
+    if (currentKey === startKey) {
       break;
     }
 
@@ -748,46 +749,54 @@ function getMovementPath(
       }
 
       if (
-        neighborKey !== destinationKey &&
         neighborKey !== startKey &&
-        getUnitAtPosition(state, neighbor)
+        neighborKey !== destinationKey &&
+        !canUnitTraversePosition(state, unit, neighbor)
       ) {
         continue;
       }
 
       visited.add(neighborKey);
-      previousByKey.set(neighborKey, currentKey);
+      distanceByKey.set(neighborKey, (distanceByKey.get(currentKey) ?? 0) + 1);
       positionsByKey.set(neighborKey, neighbor);
       queue.push(neighbor);
     }
   }
 
-  if (!visited.has(destinationKey)) {
+  if (!visited.has(startKey)) {
     return [unit.position, destination];
   }
 
-  const reversedPath: Position[] = [];
-  let currentKey = destinationKey;
+  const path: Position[] = [unit.position];
+  let current = unit.position;
+  let lastAxis: "x" | "y" | undefined;
 
-  while (true) {
-    const position = positionsByKey.get(currentKey);
-    if (position) {
-      reversedPath.push(position);
-    }
-
-    if (currentKey === startKey) {
-      break;
-    }
-
-    const previousKey = previousByKey.get(currentKey);
-    if (!previousKey) {
+  while (toPositionKey(current) !== destinationKey) {
+    const currentDistance = distanceByKey.get(toPositionKey(current));
+    if (currentDistance === undefined) {
       return [unit.position, destination];
     }
 
-    currentKey = previousKey;
+    const candidates = getAdjacentPositions(current)
+      .filter((neighbor) => {
+        const neighborDistance = distanceByKey.get(toPositionKey(neighbor));
+        return neighborDistance !== undefined && neighborDistance === currentDistance - 1;
+      })
+      .sort((left, right) =>
+        comparePathCandidates(left, right, destination, current, lastAxis),
+      );
+
+    const next = candidates[0];
+    if (!next) {
+      return [unit.position, destination];
+    }
+
+    path.push(next);
+    lastAxis = getMovementAxis(current, next);
+    current = next;
   }
 
-  return reversedPath.reverse();
+  return path;
 }
 
 function getAdjacentPositions(position: Position): Position[] {
@@ -806,6 +815,60 @@ function isPositionInBounds(state: RuntimeGameState, position: Position): boolea
     position.x < state.map.width &&
     position.y < state.map.height
   );
+}
+
+function canUnitTraversePosition(
+  state: RuntimeGameState,
+  unit: UnitState,
+  position: Position,
+): boolean {
+  const occupant = getUnitAtPosition(state, position);
+  return !occupant || occupant.team === unit.team;
+}
+
+function comparePathCandidates(
+  left: Position,
+  right: Position,
+  destination: Position,
+  current: Position,
+  lastAxis: "x" | "y" | undefined,
+): number {
+  const leftAxis = getMovementAxis(current, left);
+  const rightAxis = getMovementAxis(current, right);
+  const leftSameAxisPenalty = leftAxis === lastAxis ? 1 : 0;
+  const rightSameAxisPenalty = rightAxis === lastAxis ? 1 : 0;
+
+  if (leftSameAxisPenalty !== rightSameAxisPenalty) {
+    return leftSameAxisPenalty - rightSameAxisPenalty;
+  }
+
+  const leftRemainingBalance = Math.abs(destination.x - left.x) - Math.abs(destination.y - left.y);
+  const rightRemainingBalance = Math.abs(destination.x - right.x) - Math.abs(destination.y - right.y);
+  const leftBalanceScore = Math.abs(leftRemainingBalance);
+  const rightBalanceScore = Math.abs(rightRemainingBalance);
+
+  if (leftBalanceScore !== rightBalanceScore) {
+    return leftBalanceScore - rightBalanceScore;
+  }
+
+  const leftProgress = Math.abs(destination.x - current.x) + Math.abs(destination.y - current.y)
+    - (Math.abs(destination.x - left.x) + Math.abs(destination.y - left.y));
+  const rightProgress = Math.abs(destination.x - current.x) + Math.abs(destination.y - current.y)
+    - (Math.abs(destination.x - right.x) + Math.abs(destination.y - right.y));
+
+  if (leftProgress !== rightProgress) {
+    return rightProgress - leftProgress;
+  }
+
+  if (left.y !== right.y) {
+    return left.y - right.y;
+  }
+
+  return left.x - right.x;
+}
+
+function getMovementAxis(from: Position, to: Position): "x" | "y" {
+  return from.x !== to.x ? "x" : "y";
 }
 
 function toPositionKey(position: Position): string {

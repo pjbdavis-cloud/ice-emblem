@@ -6,6 +6,7 @@ import {
   buildPlayerActionPresentation,
   canUndo,
   getAttackReachPreviewPositions,
+  getMovementPathPreview,
   getMovementPreviewPositions,
   getReachablePositions,
   getThreatenedPositions,
@@ -34,6 +35,7 @@ export function BattleScreen() {
   const [pendingRuntimeState, setPendingRuntimeState] = useState<RuntimeGameState | undefined>();
   const [presentationLog, setPresentationLog] = useState<string[]>([]);
   const [grayLockUnitIds, setGrayLockUnitIds] = useState<string[]>([]);
+  const [hoveredMovePath, setHoveredMovePath] = useState<Position[]>([]);
   const [phaseBanner, setPhaseBanner] = useState<{ phase: RuntimeGameState["phase"]; key: number }>({
     phase: runtime.phase,
     key: 0,
@@ -77,6 +79,39 @@ export function BattleScreen() {
     () => (hoveredUnit ? getAttackReachPreviewPositions(runtime, hoveredUnit.id) : []),
     [hoveredUnit, runtime],
   );
+  useEffect(() => {
+    if (
+      !selectedUnit ||
+      selectedUnit.team !== "player" ||
+      stagedDestination ||
+      !hoveredTile ||
+      isBoardAnimating ||
+      presentationQueue.length > 0
+    ) {
+      setHoveredMovePath([]);
+      return;
+    }
+
+    const isReachable = reachableTiles.some(
+      (tile) => tile.x === hoveredTile.x && tile.y === hoveredTile.y,
+    );
+    if (!isReachable) {
+      setHoveredMovePath([]);
+      return;
+    }
+
+    setHoveredMovePath((current) =>
+      buildHoveredMovePath(runtime, selectedUnit.id, hoveredTile, current),
+    );
+  }, [
+    hoveredTile,
+    isBoardAnimating,
+    presentationQueue.length,
+    reachableTiles,
+    runtime,
+    selectedUnit,
+    stagedDestination,
+  ]);
 
   const attackableTargets = useMemo(() => {
     if (!selectedUnit) {
@@ -282,6 +317,7 @@ export function BattleScreen() {
               stagedTile={stagedDestination}
               moveHighlightTiles={moveHighlightTiles}
               attackHighlightTiles={attackHighlightTiles}
+              hoveredMovePath={hoveredMovePath}
               enemyThreatOutlineTiles={enemyThreatOutlineTiles}
               presentationQueue={presentationQueue}
               grayLockUnitIds={grayLockUnitIds}
@@ -289,7 +325,7 @@ export function BattleScreen() {
               onAnimationStateChange={setIsBoardAnimating}
               onPresentationComplete={handlePresentationComplete}
               onTileClick={handleTileClick}
-              onTileHover={setHoveredTile}
+              onTileHover={handleTileHover}
               onCancel={handleCancel}
             />
           </div>
@@ -577,6 +613,25 @@ export function BattleScreen() {
     }
   }
 
+  function handleTileHover(position?: Position) {
+    setHoveredTile((current) => {
+      if (!current && !position) {
+        return current;
+      }
+
+      if (
+        current &&
+        position &&
+        current.x === position.x &&
+        current.y === position.y
+      ) {
+        return current;
+      }
+
+      return position;
+    });
+  }
+
   function clearStagedAction() {
     setStagedDestination(undefined);
     setPendingAction("none");
@@ -648,6 +703,77 @@ function uniquePositions(positions: Position[]): Position[] {
   return Array.from(
     new Map(positions.map((position) => [`${position.x},${position.y}`, position])).values(),
   );
+}
+
+function buildHoveredMovePath(
+  runtime: RuntimeGameState,
+  unitId: string,
+  hoveredTile: Position,
+  currentPath: Position[],
+): Position[] {
+  const unit = runtime.units[unitId];
+  if (!unit) {
+    return [];
+  }
+
+  const fallbackPath = getMovementPathPreview(runtime, unitId, hoveredTile);
+  if (fallbackPath.length <= 1) {
+    return fallbackPath;
+  }
+
+  if (currentPath.length > 0 && fallbackPath.length < currentPath.length) {
+    return fallbackPath;
+  }
+
+  const origin = unit.position;
+  const normalizedCurrentPath =
+    currentPath.length > 0 &&
+    positionsEqual(currentPath[0], origin) &&
+    isPathContiguous(currentPath) &&
+    currentPath.length - 1 <= unit.stats.movement
+      ? currentPath
+      : [origin];
+  const lastPosition = normalizedCurrentPath[normalizedCurrentPath.length - 1];
+
+  if (positionsEqual(lastPosition, hoveredTile)) {
+    return normalizedCurrentPath;
+  }
+
+  const existingIndex = normalizedCurrentPath.findIndex((position) => positionsEqual(position, hoveredTile));
+  if (existingIndex >= 0) {
+    return normalizedCurrentPath.slice(0, existingIndex + 1);
+  }
+
+  if (arePositionsAdjacent(lastPosition, hoveredTile)) {
+    const extendedPath = [...normalizedCurrentPath, hoveredTile];
+    if (extendedPath.length - 1 <= unit.stats.movement && isPathEfficientEnough(extendedPath, fallbackPath)) {
+      return extendedPath;
+    }
+  }
+
+  return fallbackPath;
+}
+
+function isPathContiguous(path: Position[]): boolean {
+  for (let index = 1; index < path.length; index += 1) {
+    if (!arePositionsAdjacent(path[index - 1], path[index])) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function isPathEfficientEnough(path: Position[], fallbackPath: Position[]): boolean {
+  return path.length <= fallbackPath.length + 2;
+}
+
+function arePositionsAdjacent(left: Position, right: Position): boolean {
+  return Math.abs(left.x - right.x) + Math.abs(left.y - right.y) === 1;
+}
+
+function positionsEqual(left: Position, right: Position): boolean {
+  return left.x === right.x && left.y === right.y;
 }
 
 function formatPresentationEvent(event: PresentationEvent): string {
