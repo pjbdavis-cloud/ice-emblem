@@ -19,11 +19,17 @@ type BattleCanvasProps = {
   attackHighlightTiles: Position[];
   hoveredMovePath: Position[];
   enemyThreatOutlineTiles: Position[];
+  previewMove?: {
+    unitId: string;
+    path: Position[];
+    destination: Position;
+  };
   presentationQueue: PresentationEvent[];
   grayLockUnitIds: string[];
   pendingDefeatedUnitIds: string[];
   onAnimationStateChange?: (isAnimating: boolean) => void;
   onPresentationComplete?: () => void;
+  onPreviewMoveComplete?: () => void;
   onTileClick: (position: Position) => void;
   onTileHover: (position?: Position) => void;
   onCancel: () => void;
@@ -44,6 +50,14 @@ type ActivePresentation = {
   event: PresentationEvent;
   index: number;
   startedAt: number;
+};
+
+type ActivePreviewMove = {
+  unitId: string;
+  path: Position[];
+  destination: Position;
+  startedAt: number;
+  completed: boolean;
 };
 
 type DisplayedUnitState = {
@@ -76,11 +90,13 @@ export function BattleCanvas(props: BattleCanvasProps) {
     attackHighlightTiles,
     hoveredMovePath,
     enemyThreatOutlineTiles,
+    previewMove,
     presentationQueue,
     grayLockUnitIds,
     pendingDefeatedUnitIds,
     onAnimationStateChange,
     onPresentationComplete,
+    onPreviewMoveComplete,
     onTileClick,
     onTileHover,
     onCancel,
@@ -95,6 +111,7 @@ export function BattleCanvas(props: BattleCanvasProps) {
     tileSize: 64,
   });
   const [activePresentation, setActivePresentation] = useState<ActivePresentation | undefined>();
+  const [activePreviewMove, setActivePreviewMove] = useState<ActivePreviewMove | undefined>();
   const [animationClock, setAnimationClock] = useState(0);
 
   const moveHighlightSet = useMemo(
@@ -165,34 +182,94 @@ export function BattleCanvas(props: BattleCanvasProps) {
   }, [activePresentation, onAnimationStateChange, presentationQueue]);
 
   useEffect(() => {
-    if (!activePresentation) {
+    if (!previewMove) {
+      setActivePreviewMove(undefined);
+      if (!activePresentation) {
+        onAnimationStateChange?.(false);
+      }
       return;
     }
 
-    const duration = getEventDuration(activePresentation.event);
+    if (previewMove.path.length <= 1) {
+      setActivePreviewMove(undefined);
+      if (!activePresentation) {
+        onAnimationStateChange?.(false);
+      }
+      onPreviewMoveComplete?.();
+      return;
+    }
+
+    setActivePreviewMove((current) => {
+      if (
+        current &&
+        current.unitId === previewMove.unitId &&
+        current.destination.x === previewMove.destination.x &&
+        current.destination.y === previewMove.destination.y
+      ) {
+        return current;
+      }
+
+      onAnimationStateChange?.(true);
+      return {
+        unitId: previewMove.unitId,
+        path: previewMove.path,
+        destination: previewMove.destination,
+        startedAt: performance.now(),
+        completed: false,
+      };
+    });
+  }, [activePresentation, onAnimationStateChange, onPreviewMoveComplete, previewMove]);
+
+  useEffect(() => {
+    if (!activePresentation && (!activePreviewMove || activePreviewMove.completed)) {
+      return;
+    }
 
     const tick = () => {
       const now = performance.now();
       setAnimationClock(now);
 
-      if (now - activePresentation.startedAt < duration) {
-        frameRef.current = window.requestAnimationFrame(tick);
+      if (activePreviewMove && !activePreviewMove.completed) {
+        const previewDuration = getPreviewMoveDuration(activePreviewMove.path);
+        if (now - activePreviewMove.startedAt < previewDuration) {
+          frameRef.current = window.requestAnimationFrame(tick);
+          return;
+        }
+
+        setActivePreviewMove((current) =>
+          current
+            ? {
+                ...current,
+                completed: true,
+              }
+            : current,
+        );
+        onAnimationStateChange?.(false);
+        onPreviewMoveComplete?.();
         return;
       }
 
-      const nextIndex = activePresentation.index + 1;
-      if (nextIndex < presentationQueue.length) {
-        setActivePresentation({
-          event: presentationQueue[nextIndex],
-          index: nextIndex,
-          startedAt: now,
-        });
-        return;
-      }
+      if (activePresentation) {
+        const duration = getEventDuration(activePresentation.event);
+        if (now - activePresentation.startedAt < duration) {
+          frameRef.current = window.requestAnimationFrame(tick);
+          return;
+        }
 
-      setActivePresentation(undefined);
-      onAnimationStateChange?.(false);
-      onPresentationComplete?.();
+        const nextIndex = activePresentation.index + 1;
+        if (nextIndex < presentationQueue.length) {
+          setActivePresentation({
+            event: presentationQueue[nextIndex],
+            index: nextIndex,
+            startedAt: now,
+          });
+          return;
+        }
+
+        setActivePresentation(undefined);
+        onAnimationStateChange?.(false);
+        onPresentationComplete?.();
+      }
     };
 
     frameRef.current = window.requestAnimationFrame(tick);
@@ -202,7 +279,14 @@ export function BattleCanvas(props: BattleCanvasProps) {
         window.cancelAnimationFrame(frameRef.current);
       }
     };
-  }, [activePresentation, onAnimationStateChange, onPresentationComplete, presentationQueue]);
+  }, [
+    activePresentation,
+    activePreviewMove,
+    onAnimationStateChange,
+    onPresentationComplete,
+    onPreviewMoveComplete,
+    presentationQueue,
+  ]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -235,6 +319,7 @@ export function BattleCanvas(props: BattleCanvasProps) {
       attackHighlightSet,
       hoveredMovePath,
       enemyThreatOutlineSet,
+      activePreviewMove,
       metrics,
       activePresentation,
       presentationQueue,
@@ -249,6 +334,7 @@ export function BattleCanvas(props: BattleCanvasProps) {
     attackHighlightSet,
     hoveredMovePath,
     enemyThreatOutlineSet,
+    activePreviewMove,
     grayLockUnitIds,
     pendingDefeatedUnitIds,
     spriteImages,
@@ -309,6 +395,7 @@ function drawBoard(
     attackHighlightSet: Set<string>;
     hoveredMovePath: Position[];
     enemyThreatOutlineSet: Set<string>;
+    activePreviewMove?: ActivePreviewMove;
     metrics: BoardMetrics;
     activePresentation?: ActivePresentation;
     presentationQueue: PresentationEvent[];
@@ -332,6 +419,7 @@ function drawBoard(
     attackHighlightSet,
     hoveredMovePath,
     enemyThreatOutlineSet,
+    activePreviewMove,
     metrics,
     activePresentation,
     presentationQueue,
@@ -428,6 +516,7 @@ function drawBoard(
       grayLockUnitIds,
       pendingDefeatedUnitIds,
       activePresentation,
+      activePreviewMove,
       animationClock,
     );
     if (!displayedState.shouldRender) {
@@ -477,6 +566,11 @@ function drawUnit(
   context.fillStyle = getHealthBarColor(unit, runtime, displayedState.hp);
   roundRect(context, barX, barY, barWidth * hpRatio, barHeight, barHeight / 2);
   context.fill();
+  context.strokeStyle = "rgba(247, 235, 214, 0.92)";
+  context.lineWidth = Math.max(1, tileSize * 0.025);
+  roundRect(context, barX, barY, barWidth, barHeight, barHeight / 2);
+  context.stroke();
+  drawHealthBarTicks(context, unit.stats.maxHp, barX, barY, barWidth, barHeight);
 
   const unitFillColor = displayedState.hasActed ? "#7b7b7b" : getTeamColor(unit.team);
   const unitStrokeColor = displayedState.hasActed ? "rgba(222, 222, 222, 0.92)" : "rgba(255, 250, 240, 0.9)";
@@ -487,6 +581,9 @@ function drawUnit(
 
   context.fillStyle = unitFillColor;
   if (spriteImage && spriteImage.complete && spriteImage.naturalWidth > 0) {
+    const spriteAlpha = displayedState.hasActed ? 0.5 : 1;
+    context.globalAlpha = displayedState.opacity * spriteAlpha;
+    context.filter = displayedState.hasActed ? "grayscale(1)" : "none";
     drawSprite(
       context,
       spriteImage,
@@ -498,6 +595,16 @@ function drawUnit(
       activePresentation,
       animationClock,
     );
+    context.filter = "none";
+    if (displayedState.hasActed) {
+      context.save();
+      context.globalAlpha = displayedState.opacity;
+      context.fillStyle = "rgba(118, 118, 118, 0.16)";
+      context.beginPath();
+      context.arc(centerX, centerY, radius + Math.max(4, tileSize * 0.12), 0, Math.PI * 2);
+      context.fill();
+      context.restore();
+    }
   } else {
     context.beginPath();
     context.arc(centerX, centerY, radius, 0, Math.PI * 2);
@@ -522,6 +629,7 @@ function getDisplayedUnitState(
   grayLockUnitIds: string[],
   pendingDefeatedUnitIds: string[],
   activePresentation: ActivePresentation | undefined,
+  activePreviewMove: ActivePreviewMove | undefined,
   animationClock: number,
 ): DisplayedUnitState {
   const activeIndex = activePresentation?.index ?? -1;
@@ -564,8 +672,18 @@ function getDisplayedUnitState(
     : undefined;
   const nextMove = moveEvents.find((entry) => entry.index >= activeIndex);
   const lastCompletedMove = [...moveEvents].reverse().find((entry) => entry.index < activeIndex);
+  const previewMove =
+    activePreviewMove && activePreviewMove.unitId === unit.id ? activePreviewMove : undefined;
 
-  if (activeMove) {
+  if (previewMove && !previewMove.completed) {
+    const previewProgress = Math.max(
+      0,
+      Math.min(1, (animationClock - previewMove.startedAt) / getPreviewMoveDuration(previewMove.path)),
+    );
+    position = getPathPosition(previewMove.path, previewProgress);
+  } else if (previewMove?.completed) {
+    position = { x: previewMove.destination.x, y: previewMove.destination.y };
+  } else if (activeMove) {
     position = getPathPosition(activeMove.path, activeProgress);
   } else if (nextMove && nextMove.index > activeIndex) {
     position = { x: nextMove.event.from.x, y: nextMove.event.from.y };
@@ -722,6 +840,33 @@ function getHealthBarColor(
   return displayedHp > 0 ? "#4c9a58" : "#c53c2f";
 }
 
+function drawHealthBarTicks(
+  context: CanvasRenderingContext2D,
+  maxHp: number,
+  barX: number,
+  barY: number,
+  barWidth: number,
+  barHeight: number,
+) {
+  if (maxHp <= 1) {
+    return;
+  }
+
+  context.save();
+  context.strokeStyle = "rgba(32, 20, 12, 0.45)";
+  context.lineWidth = 1;
+
+  for (let currentHp = 1; currentHp < maxHp; currentHp += 1) {
+    const tickX = barX + (barWidth * currentHp) / maxHp;
+    context.beginPath();
+    context.moveTo(tickX, barY + 1);
+    context.lineTo(tickX, barY + barHeight - 1);
+    context.stroke();
+  }
+
+  context.restore();
+}
+
 function getCombatDeathOpacity(
   unitId: string,
   event: Extract<PresentationEvent, { type: "combat" }>,
@@ -751,6 +896,11 @@ function getEventDuration(event: PresentationEvent): number {
   }
 
   return ATTACK_ANIMATION_MS + getCombatDeathTail(event);
+}
+
+function getPreviewMoveDuration(path: Position[]): number {
+  const stepCount = Math.max(1, path.length - 1);
+  return stepCount * PLAYER_MOVE_ANIMATION_MS;
 }
 
 function getCombatDeathTail(event: Extract<PresentationEvent, { type: "combat" }>): number {

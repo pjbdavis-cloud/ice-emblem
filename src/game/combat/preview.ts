@@ -64,10 +64,17 @@ function calculateDamage(
   defender: UnitState,
   weapon: WeaponDefinition,
 ): number {
-  const speedBonus = getSpeedBonus(state, attacker.stats.speed, defender.stats.speed);
+  const speedBonus = getSpeedBonus(
+    state,
+    getEffectiveSpeed(state, attacker),
+    getEffectiveSpeed(state, defender),
+  );
   const triangleBonus = getTriangleBonus(defender, weapon, state);
-  const injuryAdjustedAttack = applyInjuryPenalty(state, attacker, attacker.stats.attack);
-  const injuryAdjustedDefense = applyInjuryPenalty(state, defender, defender.stats.defense);
+  const isMagicAttack = isMagicDiscipline(weapon.category) || weapon.category === "healing";
+  const offenseStat = isMagicAttack ? attacker.stats.magic : attacker.stats.skill;
+  const defenseStat = getEffectiveDefense(state, defender, isMagicAttack);
+  const injuryAdjustedAttack = applyInjuryPenalty(state, attacker, offenseStat);
+  const injuryAdjustedDefense = applyInjuryPenalty(state, defender, defenseStat);
 
   return Math.max(
     state.rules.minimumDamage,
@@ -88,6 +95,32 @@ function getSpeedBonus(state: RuntimeGameState, attackerSpeed: number, defenderS
   return match?.bonusDamage ?? 0;
 }
 
+function getEffectiveSpeed(state: RuntimeGameState, unit: UnitState): number {
+  return Math.max(0, unit.stats.speed - getWeaponBurdenPenalty(state, unit));
+}
+
+function getEffectiveDefense(
+  state: RuntimeGameState,
+  unit: UnitState,
+  isMagicAttack: boolean,
+): number {
+  const defensiveStat = isMagicAttack ? unit.stats.resistance : unit.stats.defense;
+  return Math.max(0, defensiveStat - getWeaponBurdenPenalty(state, unit));
+}
+
+function getWeaponBurdenPenalty(state: RuntimeGameState, unit: UnitState): number {
+  const weapon = getEquippedWeapon(state, unit);
+  if (!weapon) {
+    return 0;
+  }
+
+  const mitigation = isMagicDiscipline(weapon.category) || weapon.category === "healing"
+    ? unit.stats.intelligence
+    : unit.stats.strength;
+
+  return Math.max(0, weapon.weight - mitigation);
+}
+
 function getTriangleBonus(
   defender: UnitState,
   weapon: WeaponDefinition,
@@ -98,8 +131,8 @@ function getTriangleBonus(
     return 0;
   }
 
-  if (weapon.category === "magic" && defenderWeapon.category === "magic") {
-    return getMagicTriangleBonus(weapon.magicType, defenderWeapon.magicType);
+  if (isMagicDiscipline(weapon.category) && isMagicDiscipline(defenderWeapon.category)) {
+    return getMagicTriangleBonus(weapon.category, defenderWeapon.category);
   }
 
   return getPhysicalTriangleBonus(weapon.category, defenderWeapon.category);
@@ -125,29 +158,36 @@ function getPhysicalTriangleBonus(
 }
 
 function getMagicTriangleBonus(
-  attackerType?: WeaponDefinition["magicType"],
-  defenderType?: WeaponDefinition["magicType"],
+  attackerCategory: WeaponDefinition["category"],
+  defenderCategory: WeaponDefinition["category"],
 ): number {
   const winningPairs = new Set([
-    "water:fire",
-    "fire:earth",
-    "earth:water",
-    "light:dark",
-    "dark:light",
+    "light_magic:dark_magic",
+    "dark_magic:light_magic",
   ]);
-  const losingPairs = new Set(["fire:water", "earth:fire", "water:earth"]);
+  const neutralPairs = new Set([
+    "elemental_magic:elemental_magic",
+    "elemental_magic:light_magic",
+    "elemental_magic:dark_magic",
+    "light_magic:elemental_magic",
+    "dark_magic:elemental_magic",
+  ]);
 
-  const pair = `${attackerType}:${defenderType}`;
+  const pair = `${attackerCategory}:${defenderCategory}`;
 
   if (winningPairs.has(pair)) {
     return 1;
   }
 
-  if (losingPairs.has(pair)) {
-    return -1;
+  if (neutralPairs.has(pair)) {
+    return 0;
   }
 
   return 0;
+}
+
+function isMagicDiscipline(category: WeaponDefinition["category"]): boolean {
+  return category === "elemental_magic" || category === "light_magic" || category === "dark_magic";
 }
 
 function applyInjuryPenalty(state: RuntimeGameState, unit: UnitState, statValue: number): number {

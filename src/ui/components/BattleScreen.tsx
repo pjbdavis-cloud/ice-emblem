@@ -6,6 +6,7 @@ import {
   buildPlayerActionPresentation,
   canUndo,
   getAttackReachPreviewPositions,
+  getUnitMovement,
   getMovementPathPreview,
   getMovementPreviewPositions,
   getReachablePositions,
@@ -31,9 +32,18 @@ export function BattleScreen() {
   const [pendingAction, setPendingAction] = useState<PendingAction>("none");
   const [showEnemyThreatOverlay, setShowEnemyThreatOverlay] = useState(true);
   const [isBoardAnimating, setIsBoardAnimating] = useState(false);
+  const [previewMove, setPreviewMove] = useState<
+    | {
+        unitId: string;
+        path: Position[];
+        destination: Position;
+      }
+    | undefined
+  >();
+  const [isPreviewMoveReady, setIsPreviewMoveReady] = useState(false);
   const [presentationQueue, setPresentationQueue] = useState<PresentationEvent[]>([]);
   const [pendingRuntimeState, setPendingRuntimeState] = useState<RuntimeGameState | undefined>();
-  const [presentationLog, setPresentationLog] = useState<string[]>([]);
+  const presentationLogRef = useRef<string[]>([]);
   const [grayLockUnitIds, setGrayLockUnitIds] = useState<string[]>([]);
   const [hoveredMovePath, setHoveredMovePath] = useState<Position[]>([]);
   const [phaseBanner, setPhaseBanner] = useState<{ phase: RuntimeGameState["phase"]; key: number }>({
@@ -42,6 +52,7 @@ export function BattleScreen() {
   });
   const [showPhaseBanner, setShowPhaseBanner] = useState(true);
   const [pendingPhaseBanner, setPendingPhaseBanner] = useState<RuntimeGameState["phase"] | undefined>();
+  const actionMenuRef = useRef<HTMLDivElement>(null);
   const previousPhaseRef = useRef(runtime.phase);
   const isPlayerBannerBlocking = showPhaseBanner && phaseBanner.phase === "player";
   const [bannerInstance, setBannerInstance] = useState(0);
@@ -71,6 +82,10 @@ export function BattleScreen() {
     () => (selectedUnit && !stagedDestination ? getReachablePositions(runtime, selectedUnit.id) : []),
     [runtime, selectedUnit, stagedDestination],
   );
+  const selectedMovePreviewTiles = useMemo(
+    () => (selectedUnit && !stagedDestination ? getMovementPreviewPositions(runtime, selectedUnit.id) : []),
+    [runtime, selectedUnit, stagedDestination],
+  );
   const hoveredMovePreviewTiles = useMemo(
     () => (hoveredUnit ? getMovementPreviewPositions(runtime, hoveredUnit.id) : []),
     [hoveredUnit, runtime],
@@ -92,7 +107,7 @@ export function BattleScreen() {
       return;
     }
 
-    const isReachable = reachableTiles.some(
+    const isReachable = selectedMovePreviewTiles.some(
       (tile) => tile.x === hoveredTile.x && tile.y === hoveredTile.y,
     );
     if (!isReachable) {
@@ -107,8 +122,8 @@ export function BattleScreen() {
     hoveredTile,
     isBoardAnimating,
     presentationQueue.length,
-    reachableTiles,
     runtime,
+    selectedMovePreviewTiles,
     selectedUnit,
     stagedDestination,
   ]);
@@ -138,7 +153,7 @@ export function BattleScreen() {
       ? getCombatPreview(previewState, selectedUnit.id, hoveredAttackTarget.id)
       : undefined;
   const showingSelectedRanges = Boolean(selectedUnit);
-  const moveHighlightTiles = showingSelectedRanges ? reachableTiles : hoveredMovePreviewTiles;
+  const moveHighlightTiles = showingSelectedRanges ? selectedMovePreviewTiles : hoveredMovePreviewTiles;
   const moveHighlightTeam = showingSelectedRanges ? selectedUnit?.team : hoveredUnit?.team;
   const selectedAttackPreviewTiles = useMemo(() => {
     if (!selectedUnit) {
@@ -236,6 +251,37 @@ export function BattleScreen() {
     return () => window.clearTimeout(timeoutId);
   }, [dispatch, isBoardAnimating, pendingRuntimeState, presentationQueue.length, runtime]);
 
+  useEffect(() => {
+    if (!stagedDestination) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+
+      if (actionMenuRef.current?.contains(target)) {
+        return;
+      }
+
+      if (target.closest("[data-testid='battle-canvas']")) {
+        return;
+      }
+
+      if (pendingAction === "chooseAttackTarget") {
+        setPendingAction("chooseAction");
+        return;
+      }
+
+      clearStagedAction();
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [pendingAction, stagedDestination]);
+
   return (
     <main className="app-shell">
       <section className="battle-panel">
@@ -265,39 +311,6 @@ export function BattleScreen() {
         </header>
 
         <div className="layout">
-          <aside className="debug-sidebar">
-            <section className="card debug-card">
-              <h2>Presentation Log</h2>
-              <p>
-                Queue: {presentationQueue.length > 0 ? `${presentationQueue.length} event(s)` : "idle"}
-              </p>
-              {presentationQueue.length > 0 ? (
-                <div className="debug-block">
-                  <p className="debug-label">Pending</p>
-                  <ol className="debug-list">
-                    {presentationQueue.map((event, index) => (
-                      <li key={`${index}-${formatPresentationEvent(event)}`}>{formatPresentationEvent(event)}</li>
-                    ))}
-                  </ol>
-                </div>
-              ) : (
-                <p>No active presentation queue.</p>
-              )}
-              <div className="debug-block">
-                <p className="debug-label">Recent</p>
-                {presentationLog.length > 0 ? (
-                  <ol className="debug-list">
-                    {presentationLog.map((entry, index) => (
-                      <li key={`${index}-${entry}`}>{entry}</li>
-                    ))}
-                  </ol>
-                ) : (
-                  <p>No presentation events logged yet.</p>
-                )}
-              </div>
-            </section>
-          </aside>
-
           <div className="map-card">
             {showPhaseBanner ? (
               <div
@@ -314,22 +327,67 @@ export function BattleScreen() {
               height={runtime.map.height}
               units={units}
               hoveredTile={hoveredTile}
-              selectedTile={selectedUnit?.position}
-        stagedTile={stagedDestination}
-        moveHighlightTiles={moveHighlightTiles}
-        moveHighlightTeam={moveHighlightTeam}
-        attackHighlightTiles={attackHighlightTiles}
-        hoveredMovePath={hoveredMovePath}
+              selectedTile={stagedDestination ?? selectedUnit?.position}
+              stagedTile={stagedDestination}
+              moveHighlightTiles={moveHighlightTiles}
+              moveHighlightTeam={moveHighlightTeam}
+              attackHighlightTiles={attackHighlightTiles}
+              hoveredMovePath={hoveredMovePath}
               enemyThreatOutlineTiles={enemyThreatOutlineTiles}
+              previewMove={previewMove}
               presentationQueue={presentationQueue}
               grayLockUnitIds={grayLockUnitIds}
               pendingDefeatedUnitIds={pendingDefeatedUnitIds}
               onAnimationStateChange={setIsBoardAnimating}
               onPresentationComplete={handlePresentationComplete}
+              onPreviewMoveComplete={() => setIsPreviewMoveReady(true)}
               onTileClick={handleTileClick}
               onTileHover={handleTileHover}
               onCancel={handleCancel}
             />
+            {selectedUnit && stagedDestination && isPreviewMoveReady ? (
+              <div
+                ref={actionMenuRef}
+                className="map-action-menu"
+                style={getActionMenuStyle(
+                  stagedDestination,
+                  runtime.map.width,
+                  runtime.map.height,
+                )}
+              >
+                <p className="map-action-title">
+                  {stagedDestination.x},{stagedDestination.y}
+                </p>
+                {pendingAction === "chooseAction" ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={isPlayerBannerBlocking || attackableTargets.length === 0}
+                      onClick={() => setPendingAction("chooseAttackTarget")}
+                    >
+                      Attack
+                    </button>
+                    <button type="button" disabled>
+                      Use Item
+                    </button>
+                    <button type="button" disabled={isPlayerBannerBlocking} onClick={handleWait}>
+                      Wait
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="map-action-hint">Choose an enemy target.</p>
+                    <button
+                      type="button"
+                      disabled={isPlayerBannerBlocking}
+                      onClick={() => setPendingAction("chooseAction")}
+                    >
+                      Back
+                    </button>
+                  </>
+                )}
+              </div>
+            ) : null}
           </div>
 
           <aside className="sidebar">
@@ -342,10 +400,14 @@ export function BattleScreen() {
                     <p>
                       HP: {hoveredUnit.currentHp}/{hoveredUnit.stats.maxHp}
                     </p>
-                    <p>ATK: {hoveredUnit.stats.attack}</p>
+                    <p>STR: {hoveredUnit.stats.strength}</p>
+                    <p>SKL: {hoveredUnit.stats.skill}</p>
+                    <p>MAG: {hoveredUnit.stats.magic}</p>
+                    <p>INT: {hoveredUnit.stats.intelligence}</p>
                     <p>DEF: {hoveredUnit.stats.defense}</p>
+                    <p>RES: {hoveredUnit.stats.resistance}</p>
                     <p>SPD: {hoveredUnit.stats.speed}</p>
-                    <p>MOV: {hoveredUnit.stats.movement}</p>
+                    <p>MOV: {getUnitMovement(runtime, hoveredUnit)}</p>
                     <p>
                       Tile: {hoveredUnit.position.x},{hoveredUnit.position.y}
                     </p>
@@ -394,19 +456,21 @@ export function BattleScreen() {
                     <p>
                       HP: {selectedUnit.currentHp}/{selectedUnit.stats.maxHp}
                     </p>
-                    <p>ATK: {selectedUnit.stats.attack}</p>
+                    <p>STR: {selectedUnit.stats.strength}</p>
+                    <p>SKL: {selectedUnit.stats.skill}</p>
+                    <p>MAG: {selectedUnit.stats.magic}</p>
+                    <p>INT: {selectedUnit.stats.intelligence}</p>
                     <p>DEF: {selectedUnit.stats.defense}</p>
+                    <p>RES: {selectedUnit.stats.resistance}</p>
                     <p>SPD: {selectedUnit.stats.speed}</p>
-                    <p>MOV: {selectedUnit.stats.movement}</p>
+                    <p>MOV: {getUnitMovement(runtime, selectedUnit)}</p>
                     <p>{selectedUnit.hasMoved ? "Moved this turn" : "Ready to move"}</p>
                     <p>{selectedUnit.hasActed ? "Action spent" : "Action available"}</p>
-                    <button
-                      type="button"
-                      disabled={isPlayerBannerBlocking || selectedUnit.hasActed}
-                      onClick={handleWait}
-                    >
-                      Wait
-                    </button>
+                    <p>
+                      {stagedDestination && isPreviewMoveReady
+                        ? `Staged at ${stagedDestination.x},${stagedDestination.y}`
+                        : "Click a reachable tile to stage a move."}
+                    </p>
                   </>
                 ) : (
                   <p>No unit selected.</p>
@@ -437,55 +501,6 @@ export function BattleScreen() {
                 <p>Select a unit, stage a move, then hover an enemy to preview that fight.</p>
               )}
             </section>
-
-            <section className="card">
-              <h2>Command</h2>
-              {selectedUnit && stagedDestination ? (
-                <>
-                  <p>
-                    Move to {stagedDestination.x},{stagedDestination.y}
-                  </p>
-                  {pendingAction === "chooseAction" ? (
-                    <div className="command-actions">
-                      <button
-                        type="button"
-                        disabled={isPlayerBannerBlocking || attackableTargets.length === 0}
-                        onClick={() => setPendingAction("chooseAttackTarget")}
-                      >
-                        Attack
-                      </button>
-                      <button type="button" disabled={isPlayerBannerBlocking} onClick={handleWait}>
-                        Wait
-                      </button>
-                      <button type="button" disabled={isPlayerBannerBlocking} onClick={clearStagedAction}>
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      <p>Choose a red target, or go back and pick Wait.</p>
-                      <div className="command-actions">
-                        <button
-                          type="button"
-                          disabled={isPlayerBannerBlocking}
-                          onClick={() => setPendingAction("chooseAction")}
-                        >
-                          Back
-                        </button>
-                        <button type="button" disabled={isPlayerBannerBlocking} onClick={clearStagedAction}>
-                          Cancel
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </>
-              ) : (
-                <p>Click a blue tile to stage a move. The unit will not move until you confirm Wait or Attack.</p>
-              )}
-              <p>
-                Enemy Threat: {showEnemyThreatOverlay ? "On" : "Off"} (press Space)
-              </p>
-            </section>
           </aside>
         </div>
       </section>
@@ -493,14 +508,23 @@ export function BattleScreen() {
   );
 
   function handleTileClick(position: Position) {
-    if (isPlayerBannerBlocking) {
+    if (isPlayerBannerBlocking || (Boolean(previewMove) && !isPreviewMoveReady)) {
       return;
     }
 
     const clickedUnit = getUnitAtPosition(units, position);
 
-    if (pendingAction === "chooseAttackTarget" && selectedUnit && clickedUnit?.team !== selectedUnit.team) {
-      handleAttack(clickedUnit?.id);
+    if (pendingAction === "chooseAttackTarget" && selectedUnit) {
+      if (clickedUnit?.team !== selectedUnit.team) {
+        handleAttack(clickedUnit?.id);
+      } else {
+        setPendingAction("chooseAction");
+      }
+      return;
+    }
+
+    if (stagedDestination) {
+      clearStagedAction();
       return;
     }
 
@@ -525,8 +549,15 @@ export function BattleScreen() {
     );
 
     if (isReachable) {
+      const previewPath = getMovementPathPreview(runtime, selectedUnit.id, position);
       setStagedDestination(position);
       setPendingAction("chooseAction");
+      setIsPreviewMoveReady(previewPath.length <= 1);
+      setPreviewMove({
+        unitId: selectedUnit.id,
+        path: previewPath,
+        destination: position,
+      });
       return;
     }
 
@@ -549,12 +580,16 @@ export function BattleScreen() {
       },
       stagedDestination,
     );
-    if (result.presentationEvents.length > 0) {
-      queuePresentationEvents(result.presentationEvents, "Player", result.nextState, runtime);
+    const presentationEvents = shouldSkipPlayerMoveReplay()
+      ? stripInitialMovePresentation(result.presentationEvents, selectedUnit.id)
+      : result.presentationEvents;
+
+    if (presentationEvents.length > 0) {
+      queuePresentationEvents(presentationEvents, "Player", result.nextState, runtime);
     } else {
       dispatch(replaceRuntimeState(result.nextState));
+      clearStagedAction();
     }
-    clearStagedAction();
   }
 
   function handleWait() {
@@ -567,10 +602,15 @@ export function BattleScreen() {
       { type: "waitUnit", unitId: selectedUnit.id },
       stagedDestination,
     );
-    if (result.presentationEvents.length > 0) {
-      queuePresentationEvents(result.presentationEvents, "Player", result.nextState, runtime);
-    } else {
+
+    if (shouldSkipPlayerMoveReplay()) {
       dispatch(replaceRuntimeState(result.nextState));
+    } else {
+      if (result.presentationEvents.length > 0) {
+        queuePresentationEvents(result.presentationEvents, "Player", result.nextState, runtime);
+      } else {
+        dispatch(replaceRuntimeState(result.nextState));
+      }
     }
     clearStagedAction();
   }
@@ -637,6 +677,8 @@ export function BattleScreen() {
   function clearStagedAction() {
     setStagedDestination(undefined);
     setPendingAction("none");
+    setPreviewMove(undefined);
+    setIsPreviewMoveReady(false);
   }
 
   function clearSelection() {
@@ -652,23 +694,26 @@ export function BattleScreen() {
     setPendingRuntimeState(nextState);
     setPresentationQueue(events);
     setGrayLockUnitIds(getGrayLockUnitIds(previousState, nextState));
-    setPresentationLog((current) =>
-      [
-        `${source} queued ${events.length} event(s)`,
-        ...events.map((event) => `${source}: ${formatPresentationEvent(event)}`),
-        ...current,
-      ].slice(0, 18),
-    );
+    presentationLogRef.current = [
+      `${source} queued ${events.length} event(s)`,
+      ...events.map((event) => `${source}: ${formatPresentationEvent(event)}`),
+      ...presentationLogRef.current,
+    ].slice(0, 18);
   }
 
   function handlePresentationComplete() {
     if (pendingRuntimeState) {
       dispatch(replaceRuntimeState(pendingRuntimeState));
     }
-    setPresentationLog((current) => ["Queue complete", ...current].slice(0, 18));
+    presentationLogRef.current = ["Queue complete", ...presentationLogRef.current].slice(0, 18);
     setGrayLockUnitIds([]);
     setPendingRuntimeState(undefined);
     setPresentationQueue([]);
+    clearStagedAction();
+  }
+
+  function shouldSkipPlayerMoveReplay() {
+    return Boolean(stagedDestination && previewMove && isPreviewMoveReady);
   }
 }
 
@@ -707,11 +752,36 @@ function uniquePositions(positions: Position[]): Position[] {
   );
 }
 
+function getActionMenuStyle(position: Position, width: number, height: number) {
+  return {
+    left: `${((position.x + 0.5) / width) * 100}%`,
+    top: `${((position.y + 0.5) / height) * 100}%`,
+  };
+}
+
+function stripInitialMovePresentation(events: PresentationEvent[], unitId: string): PresentationEvent[] {
+  if (events.length === 0) {
+    return events;
+  }
+
+  let startIndex = 0;
+  const firstEvent = events[startIndex];
+  if (firstEvent?.type === "move" && firstEvent.unitId === unitId) {
+    startIndex += 1;
+  }
+  const secondEvent = events[startIndex];
+  if (secondEvent?.type === "pause" && secondEvent.unitId === unitId) {
+    startIndex += 1;
+  }
+
+  return events.slice(startIndex);
+}
+
 function buildHoveredMovePath(
   runtime: RuntimeGameState,
   unitId: string,
   hoveredTile: Position,
-  currentPath: Position[],
+  currentStack: Position[],
 ): Position[] {
   const unit = runtime.units[unitId];
   if (!unit) {
@@ -723,32 +793,32 @@ function buildHoveredMovePath(
     return fallbackPath;
   }
 
-  if (currentPath.length > 0 && fallbackPath.length < currentPath.length) {
+  if (currentStack.length > 0 && fallbackPath.length < currentStack.length) {
     return fallbackPath;
   }
 
   const origin = unit.position;
-  const normalizedCurrentPath =
-    currentPath.length > 0 &&
-    positionsEqual(currentPath[0], origin) &&
-    isPathContiguous(currentPath) &&
-    currentPath.length - 1 <= unit.stats.movement
-      ? currentPath
+  const normalizedStack =
+    currentStack.length > 0 &&
+      positionsEqual(currentStack[0], origin) &&
+      isPathContiguous(currentStack) &&
+      currentStack.length - 1 <= getUnitMovement(runtime, unit)
+      ? currentStack
       : [origin];
-  const lastPosition = normalizedCurrentPath[normalizedCurrentPath.length - 1];
+  const lastPosition = normalizedStack[normalizedStack.length - 1];
 
   if (positionsEqual(lastPosition, hoveredTile)) {
-    return normalizedCurrentPath;
+    return normalizedStack;
   }
 
-  const existingIndex = normalizedCurrentPath.findIndex((position) => positionsEqual(position, hoveredTile));
+  const existingIndex = normalizedStack.findIndex((position) => positionsEqual(position, hoveredTile));
   if (existingIndex >= 0) {
-    return normalizedCurrentPath.slice(0, existingIndex + 1);
+    return normalizedStack.slice(0, existingIndex + 1);
   }
 
   if (arePositionsAdjacent(lastPosition, hoveredTile)) {
-    const extendedPath = [...normalizedCurrentPath, hoveredTile];
-    if (extendedPath.length - 1 <= unit.stats.movement && isPathEfficientEnough(extendedPath, fallbackPath)) {
+    const extendedPath = [...normalizedStack, hoveredTile];
+    if (extendedPath.length - 1 <= getUnitMovement(runtime, unit) && isPathEfficientEnough(extendedPath, fallbackPath)) {
       return extendedPath;
     }
   }

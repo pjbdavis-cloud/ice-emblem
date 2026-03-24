@@ -47,19 +47,24 @@ function createDefaultSpriteSet(classId: string, team: Team): UnitSpriteSet {
   };
 }
 
-const defaultClasses = ["lord", "fighter", "archer", "mage"];
+const defaultClasses = ["prince", "mercenary", "fighter", "soldier", "archer", "mage", "enchanter", "healer"];
 const teams: Team[] = ["player", "enemy", "ally"];
 
 const byClassAndTeam = Object.fromEntries(
   defaultClasses.map((classId) => [
     classId,
-    Object.fromEntries(teams.map((team) => [team, createDefaultSpriteSet(classId, team)])),
+    Object.fromEntries(
+      teams.map((team) => [
+        team,
+        createDefaultSpriteSet(classId === "prince" ? "lord" : classId, team),
+      ]),
+    ),
   ]),
 ) as UnitSpriteCollection["byClassAndTeam"];
 
-if (byClassAndTeam.lord?.player?.idle) {
-  byClassAndTeam.lord.player.idle = {
-    ...byClassAndTeam.lord.player.idle,
+if (byClassAndTeam.prince?.player?.idle) {
+  byClassAndTeam.prince.player.idle = {
+    ...byClassAndTeam.prince.player.idle,
     frameDurationMs: 180,
   };
 }

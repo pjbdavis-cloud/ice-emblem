@@ -63,7 +63,7 @@ button {
   align-items: start;
   display: grid;
   gap: 16px;
-  grid-template-columns: minmax(240px, 0.7fr) minmax(0, 2.1fr) minmax(420px, 1.1fr);
+  grid-template-columns: minmax(0, 2.1fr) minmax(420px, 1.1fr);
 }
 
 .map-card,
@@ -97,6 +97,48 @@ button {
   display: block;
   max-height: calc(100vh - 142px);
   max-width: 100%;
+}
+
+.map-action-menu {
+  background: rgba(255, 247, 232, 0.97);
+  border: 1px solid rgba(84, 50, 17, 0.28);
+  border-radius: 18px;
+  box-shadow: 0 16px 30px rgba(45, 24, 11, 0.24);
+  display: grid;
+  gap: 8px;
+  min-width: 150px;
+  padding: 12px;
+  position: absolute;
+  transform: translate(-50%, -112%);
+  z-index: 3;
+}
+
+.map-action-menu button {
+  background: #8f2d17;
+  border: 0;
+  border-radius: 999px;
+  color: #fff6ea;
+  cursor: pointer;
+  padding: 8px 14px;
+}
+
+.map-action-menu button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.map-action-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.map-action-hint {
+  color: rgba(35, 24, 13, 0.8);
+  font-size: 0.9rem;
+  margin: 0;
 }
 
 .phase-banner {
@@ -162,7 +204,7 @@ button {
 .sidebar {
   display: grid;
   gap: 12px;
-  grid-template-rows: minmax(0, 1.1fr) repeat(2, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1.5fr) minmax(0, 0.9fr);
   height: calc(100vh - 110px);
 }
 
@@ -172,14 +214,18 @@ button {
 }
 
 .info-panels {
+  align-items: stretch;
   display: grid;
   gap: 12px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  height: 100%;
   min-height: 0;
 }
 
 .compact-card {
+  height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 
 .debug-card {

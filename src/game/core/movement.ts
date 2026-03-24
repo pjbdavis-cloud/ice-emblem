@@ -1,5 +1,13 @@
 import { getEquippedWeapon } from "../combat/preview";
-import type { Position, RuntimeGameState, UnitState } from "../types";
+import type { ClassDefinition, Position, RuntimeGameState, UnitState } from "../types";
+
+export function getUnitClass(state: RuntimeGameState, unit: UnitState): ClassDefinition | undefined {
+  return state.map.classes.find((classDefinition) => classDefinition.id === unit.classId);
+}
+
+export function getUnitMovement(state: RuntimeGameState, unit: UnitState): number {
+  return getUnitClass(state, unit)?.movement ?? 0;
+}
 
 export function getReachablePositions(state: RuntimeGameState, unitId: string): Position[] {
   const unit = state.units[unitId];
@@ -25,6 +33,7 @@ export function getMovementPreviewPositions(state: RuntimeGameState, unitId: str
 
   const visited = new Map<string, number>();
   const reachable = new Map<string, Position>();
+  const movement = getUnitMovement(state, unit);
   const queue: Array<{ position: Position; steps: number }> = [
     { position: unit.position, steps: 0 },
   ];
@@ -39,12 +48,12 @@ export function getMovementPreviewPositions(state: RuntimeGameState, unitId: str
     }
 
     for (const neighbor of getAdjacentPositions(current.position)) {
-      if (!isPositionInBounds(state, neighbor)) {
+      if (!isPositionInBounds(state, neighbor) || !isTerrainPassable(state, neighbor)) {
         continue;
       }
 
       const nextSteps = current.steps + 1;
-      if (nextSteps > unit.stats.movement) {
+      if (nextSteps > movement) {
         continue;
       }
 
@@ -202,7 +211,7 @@ export function getMovementPathPreview(
     }
 
     for (const neighbor of getAdjacentPositions(current)) {
-      if (!isPositionInBounds(state, neighbor)) {
+      if (!isPositionInBounds(state, neighbor) || !isTerrainPassable(state, neighbor)) {
         continue;
       }
 
@@ -289,8 +298,16 @@ function canUnitTraversePosition(
   unit: UnitState,
   position: Position,
 ): boolean {
+  if (!isTerrainPassable(state, position)) {
+    return false;
+  }
+
   const occupant = getUnitAtPosition(state, position);
   return !occupant || occupant.team === unit.team;
+}
+
+function isTerrainPassable(state: RuntimeGameState, position: Position): boolean {
+  return state.map.tiles[position.y]?.[position.x]?.terrain !== "wall";
 }
 
 function comparePathCandidates(

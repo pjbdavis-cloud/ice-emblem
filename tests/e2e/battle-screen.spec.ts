@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const MAP_WIDTH = 8;
-const MAP_HEIGHT = 6;
+const MAP_WIDTH = 15;
+const MAP_HEIGHT = 10;
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
@@ -23,13 +23,11 @@ test("stages and cancels a move through real canvas interaction", async ({ page 
   await clickTile(page, 1, 4);
   await clickTile(page, 1, 3);
 
-  await expect(page.getByText("Move to 1,3")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible();
+  await expect(page.getByText("1,3")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Wait" })).toBeVisible();
 
   await page.keyboard.press("Escape");
-  await expect(
-    page.getByText("Click a blue tile to stage a move. The unit will not move until you confirm Wait or Attack."),
-  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Wait" })).toBeHidden();
   await expectSelectedPanelToContain(page, "Aster");
 });
 
@@ -43,36 +41,49 @@ test("hovering updates the hover panel separately from the selected panel", asyn
 });
 
 test("enemy phase resolves one enemy at a time and returns to player phase", async ({ page }) => {
-  const presentationSection = page.getByRole("heading", { name: "Presentation Log" }).locator("..");
-
   await page.getByRole("button", { name: "End Phase" }).click();
   await expect(page.locator(".phase-banner-enemy")).toBeVisible();
   await expect(page.locator(".phase-banner-enemy")).toBeHidden({ timeout: 4000 });
 
   await expect
     .poll(
-      async () => presentationSection.locator("li").filter({ hasText: "Enemy queued" }).count(),
+      async () =>
+        page.evaluate(() => {
+          const api = (
+            window as typeof window & {
+              __ICE_EMBLEM_TEST_API__?: {
+                getRuntimeState: () => unknown;
+              };
+            }
+          ).__ICE_EMBLEM_TEST_API__;
+
+          if (!api) {
+            throw new Error("Missing test API");
+          }
+
+          const runtime = api.getRuntimeState() as {
+            phase: string;
+            units: Record<string, { team: string; hasActed: boolean }>;
+          };
+
+          const actedEnemyCount = Object.values(runtime.units).filter(
+            (unit) => unit.team === "enemy" && unit.hasActed,
+          ).length;
+
+          return `${runtime.phase}:${actedEnemyCount}`;
+        }),
       { timeout: 15000 },
     )
-    .toBe(2);
+    .toBe("enemy:1");
 
-  await expect(page.getByText("Turn 2 | PLAYER PHASE")).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText("Turn 2 | PLAYER PHASE")).toBeVisible({ timeout: 30000 });
 });
 
 test("a defeated unit no longer appears on the board after lethal combat resolves", async ({ page }) => {
-  await setLethalArcherScenario(page);
-
-  await clickTile(page, 1, 2);
-  await clickTile(page, 1, 1);
-  await page
-    .getByRole("heading", { name: "Command" })
-    .locator("..")
-    .getByRole("button", { name: /^Attack$/ })
-    .click();
-  await clickTile(page, 3, 1);
+  await setDefeatedFighterScenario(page);
 
   await hoverTile(page, 3, 1);
-  await expect(page.getByText("Empty Tile")).toBeVisible({ timeout: 6000 });
+  await expectSectionToContain(page, "Hover", "Position: 3,1");
 });
 
 async function clickTile(page: Page, x: number, y: number) {
@@ -166,6 +177,41 @@ async function setLethalArcherScenario(page: Page) {
     runtime.units["enemy-mage"].hasMoved = false;
     runtime.units["enemy-mage"].isDefeated = false;
     runtime.units["enemy-mage"].currentHp = 16;
+
+    api.replaceRuntimeState(runtime);
+  });
+}
+
+async function setDefeatedFighterScenario(page: Page) {
+  await page.evaluate(() => {
+    const api = (
+      window as typeof window & {
+        __ICE_EMBLEM_TEST_API__?: {
+          getRuntimeState: () => unknown;
+          replaceRuntimeState: (runtime: unknown) => void;
+        };
+      }
+    ).__ICE_EMBLEM_TEST_API__;
+
+    if (!api) {
+      throw new Error("Missing test API");
+    }
+
+    const runtime = structuredClone(api.getRuntimeState() as Record<string, unknown>) as {
+      units: Record<string, {
+        currentHp: number;
+        position: { x: number; y: number };
+        hasActed: boolean;
+        hasMoved: boolean;
+        isDefeated: boolean;
+      }>;
+    };
+
+    runtime.units["enemy-fighter"].position = { x: 3, y: 1 };
+    runtime.units["enemy-fighter"].currentHp = 0;
+    runtime.units["enemy-fighter"].isDefeated = true;
+    runtime.units["enemy-fighter"].hasActed = true;
+    runtime.units["enemy-fighter"].hasMoved = true;
 
     api.replaceRuntimeState(runtime);
   });

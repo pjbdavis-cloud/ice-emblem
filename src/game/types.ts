@@ -4,17 +4,17 @@ export type Phase = "player" | "enemy";
 
 export type WeaponRank = "E" | "D" | "C" | "B" | "A" | "S";
 
-export type WeaponCategory =
+export type WeaponDiscipline =
   | "sword"
   | "axe"
   | "lance"
   | "bow"
-  | "magic"
-  | "staff";
+  | "elemental_magic"
+  | "light_magic"
+  | "dark_magic"
+  | "healing";
 
-export type MagicType = "water" | "fire" | "earth" | "light" | "dark";
-
-export type TerrainType = "plain" | "forest" | "fort";
+export type TerrainType = "plain" | "forest" | "fort" | "wall";
 
 export type ObjectiveType = "route" | "defeatBoss";
 
@@ -29,11 +29,16 @@ export type Position = {
 
 export type Stats = {
   maxHp: number;
-  attack: number;
+  strength: number;
+  skill: number;
+  magic: number;
+  intelligence: number;
   defense: number;
+  resistance: number;
   speed: number;
-  movement: number;
 };
+
+export type GrowthRates = Record<keyof Stats, number>;
 
 export type UnitDefinition = {
   id: string;
@@ -47,6 +52,7 @@ export type UnitDefinition = {
   position: Position;
   inventory: string[];
   equippedWeaponId: string;
+  weaponProficiencies: Partial<Record<WeaponDiscipline, WeaponRank>>;
   personalSkillId?: string;
   classSkillId?: string;
   behavior?: UnitBehavior;
@@ -59,14 +65,18 @@ export type ClassDefinition = {
   name: string;
   tier: 1 | 2;
   movement: number;
+  learnableDisciplines: WeaponDiscipline[];
+  baseStats: Stats;
+  growthRates: GrowthRates;
+  statCaps: Stats;
 };
 
 export type WeaponDefinition = {
   id: string;
   name: string;
-  category: WeaponCategory;
-  magicType?: MagicType;
+  category: WeaponDiscipline;
   might: number;
+  weight: number;
   minRange: 1 | 2;
   maxRange: 1 | 2;
   requiredRank: WeaponRank;

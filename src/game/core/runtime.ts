@@ -5,6 +5,7 @@ import type {
   RuntimeSnapshot,
   UnitState,
 } from "../types";
+import { applyClassStatMinimums } from "./stats";
 
 const defaultRules: RulesConfig = {
   gameMode: "classic",
@@ -21,15 +22,23 @@ const defaultRules: RulesConfig = {
 
 export function createInitialRuntimeState(map: BattleMapDefinition): RuntimeGameState {
   const units = Object.fromEntries(
-    map.units.map((unit) => [
-      unit.id,
-      {
-        ...unit,
-        hasActed: false,
-        hasMoved: false,
-        isDefeated: false,
-      } satisfies UnitState,
-    ]),
+    map.units.map((unit) => {
+      const classDefinition = map.classes.find((classDef) => classDef.id === unit.classId);
+      const stats = classDefinition ? applyClassStatMinimums(unit.stats, classDefinition) : unit.stats;
+      const currentHp = Math.min(Math.max(unit.currentHp, 0), stats.maxHp);
+
+      return [
+        unit.id,
+        {
+          ...unit,
+          stats,
+          currentHp,
+          hasActed: false,
+          hasMoved: false,
+          isDefeated: false,
+        } satisfies UnitState,
+      ];
+    }),
   );
 
   return {
@@ -84,7 +93,12 @@ export function cloneRuntimeState(state: RuntimeGameState): RuntimeGameState {
         position: { ...unit.position },
         inventory: [...unit.inventory],
       })),
-      classes: state.map.classes.map((classDef) => ({ ...classDef })),
+      classes: state.map.classes.map((classDef) => ({
+        ...classDef,
+        baseStats: { ...classDef.baseStats },
+        growthRates: { ...classDef.growthRates },
+        statCaps: { ...classDef.statCaps },
+      })),
       weapons: state.map.weapons.map((weapon) => ({ ...weapon })),
     },
     units: Object.fromEntries(

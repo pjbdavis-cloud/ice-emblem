@@ -14,6 +14,7 @@ import {
   getMovementPreviewPositions,
   getReachablePositions,
   getThreatenedPositions,
+  getUnitMovement,
   getUnitAtPosition,
   isUnitInjured,
 } from "./movement";
@@ -26,6 +27,7 @@ import {
   maybeAdvancePhase,
   undoLastAction,
 } from "./runtime";
+export { levelUpUnit } from "./progression";
 
 const MOVE_TO_ATTACK_PAUSE_MS = 360;
 
@@ -39,6 +41,7 @@ export {
   getMovementPreviewPositions,
   getReachablePositions,
   getThreatenedPositions,
+  getUnitMovement,
   getUnitAtPosition,
   isUnitInjured,
   undoLastAction,
