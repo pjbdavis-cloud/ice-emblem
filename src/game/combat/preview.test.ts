@@ -7,8 +7,7 @@ const statLine = (
   maxHp: number,
   strength: number,
   skill: number,
-  magic: number,
-  intelligence: number,
+  luck: number,
   defense: number,
   resistance: number,
   speed: number,
@@ -16,8 +15,7 @@ const statLine = (
   maxHp,
   strength,
   skill,
-  magic,
-  intelligence,
+  luck,
   defense,
   resistance,
   speed,
@@ -42,9 +40,9 @@ function createTestMap(units: UnitDefinition[]): BattleMapDefinition {
         tier: 1,
         movement: 5,
         learnableDisciplines: ["sword", "axe"],
-        baseStats: statLine(22, 7, 5, 0, 0, 3, 1, 5),
-        growthRates: statLine(80, 50, 35, 5, 10, 30, 15, 35),
-        statCaps: statLine(44, 22, 18, 6, 6, 16, 10, 18),
+        baseStats: statLine(22, 7, 5, 3, 3, 1, 5),
+        growthRates: statLine(80, 50, 35, 20, 30, 15, 35),
+        statCaps: statLine(44, 22, 18, 22, 16, 10, 18),
       },
       {
         id: "archer",
@@ -52,9 +50,9 @@ function createTestMap(units: UnitDefinition[]): BattleMapDefinition {
         tier: 1,
         movement: 5,
         learnableDisciplines: ["bow"],
-        baseStats: statLine(18, 5, 7, 0, 2, 3, 2, 6),
-        growthRates: statLine(65, 25, 55, 5, 25, 25, 20, 50),
-        statCaps: statLine(36, 18, 22, 6, 12, 14, 12, 22),
+        baseStats: statLine(18, 5, 7, 5, 3, 2, 6),
+        growthRates: statLine(65, 25, 55, 40, 25, 20, 50),
+        statCaps: statLine(36, 18, 22, 24, 14, 12, 22),
       },
       {
         id: "mage",
@@ -62,9 +60,9 @@ function createTestMap(units: UnitDefinition[]): BattleMapDefinition {
         tier: 1,
         movement: 5,
         learnableDisciplines: ["elemental_magic"],
-        baseStats: statLine(17, 1, 1, 6, 6, 2, 5, 5),
-        growthRates: statLine(55, 10, 10, 60, 55, 20, 45, 45),
-        statCaps: statLine(34, 8, 10, 22, 22, 12, 18, 20),
+        baseStats: statLine(17, 6, 1, 4, 2, 5, 5),
+        growthRates: statLine(55, 60, 10, 35, 20, 45, 45),
+        statCaps: statLine(34, 22, 10, 24, 12, 18, 20),
       },
       {
         id: "light-raider",
@@ -72,16 +70,16 @@ function createTestMap(units: UnitDefinition[]): BattleMapDefinition {
         tier: 1,
         movement: 5,
         learnableDisciplines: ["axe"],
-        baseStats: statLine(18, 1, 4, 0, 0, 4, 1, 6),
-        growthRates: statLine(60, 20, 35, 0, 10, 25, 10, 45),
-        statCaps: statLine(36, 10, 16, 4, 6, 14, 10, 20),
+        baseStats: statLine(18, 1, 4, 2, 4, 1, 6),
+        growthRates: statLine(60, 20, 35, 20, 25, 10, 45),
+        statCaps: statLine(36, 10, 16, 18, 14, 10, 20),
       },
     ],
     weapons: [
-      { id: "iron-sword", name: "Iron Sword", category: "sword", might: 5, weight: 1, minRange: 1, maxRange: 1, requiredRank: "E" },
-      { id: "iron-bow", name: "Iron Bow", category: "bow", might: 6, weight: 2, minRange: 2, maxRange: 2, requiredRank: "E" },
-      { id: "fire-tome", name: "Fire Tome", category: "elemental_magic", might: 5, weight: 2, minRange: 1, maxRange: 2, requiredRank: "E" },
-      { id: "war-axe", name: "War Axe", category: "axe", might: 8, weight: 4, minRange: 1, maxRange: 1, requiredRank: "E" },
+      { id: "iron-sword", name: "Iron Sword", category: "sword", might: 5, complexity: 1, minRange: 1, maxRange: 1, requiredRank: "E" },
+      { id: "iron-bow", name: "Iron Bow", category: "bow", might: 6, complexity: 2, minRange: 2, maxRange: 2, requiredRank: "E" },
+      { id: "fire-tome", name: "Fire Tome", category: "elemental_magic", might: 5, complexity: 2, minRange: 1, maxRange: 2, requiredRank: "E" },
+      { id: "war-axe", name: "War Axe", category: "axe", might: 8, complexity: 4, minRange: 1, maxRange: 1, requiredRank: "E" },
     ],
     units,
   };
@@ -95,7 +93,7 @@ function createUnit(overrides: Partial<UnitDefinition> & Pick<UnitDefinition, "i
     team: overrides.team,
     level: overrides.level ?? 1,
     tier: overrides.tier ?? 1,
-    stats: overrides.stats ?? { maxHp: 20, strength: 6, skill: 6, magic: 1, intelligence: 2, defense: 4, resistance: 3, speed: 5 },
+    stats: overrides.stats ?? { maxHp: 20, strength: 6, skill: 6, luck: 4, defense: 4, resistance: 3, speed: 5 },
     currentHp: overrides.currentHp ?? (overrides.stats?.maxHp ?? 20),
     position: overrides.position,
     inventory: overrides.inventory ?? ["iron-sword"],
@@ -119,14 +117,14 @@ describe("combat preview", () => {
           id: "attacker",
           team: "player",
           position: { x: 1, y: 1 },
-          stats: { maxHp: 20, strength: 10, skill: 10, magic: 1, intelligence: 2, defense: 4, resistance: 3, speed: 5 },
+          stats: { maxHp: 20, strength: 10, skill: 10, luck: 4, defense: 4, resistance: 3, speed: 5 },
           equippedWeaponId: "iron-sword",
         }),
         createUnit({
           id: "defender",
           team: "enemy",
           position: { x: 2, y: 1 },
-          stats: { maxHp: 12, strength: 7, skill: 7, magic: 0, intelligence: 0, defense: 1, resistance: 1, speed: 4 },
+          stats: { maxHp: 12, strength: 7, skill: 7, luck: 2, defense: 1, resistance: 1, speed: 4 },
           currentHp: 4,
           equippedWeaponId: "iron-sword",
         }),
@@ -135,9 +133,10 @@ describe("combat preview", () => {
 
     const preview = getCombatPreview(runtime, "attacker", "defender");
 
-    expect(preview.attackerDamage).toBeGreaterThanOrEqual(4);
+    expect(preview.attackerMinDamage).toBeGreaterThanOrEqual(4);
     expect(preview.defenderCanCounter).toBe(false);
-    expect(preview.defenderDamage).toBe(0);
+    expect(preview.defenderMinDamage).toBe(0);
+    expect(preview.defenderMaxDamage).toBe(0);
   });
 
   it("applies injury penalties using the configured threshold", () => {
@@ -147,7 +146,7 @@ describe("combat preview", () => {
           id: "attacker",
           team: "player",
           position: { x: 1, y: 1 },
-          stats: { maxHp: 20, strength: 10, skill: 10, magic: 1, intelligence: 2, defense: 4, resistance: 3, speed: 5 },
+          stats: { maxHp: 20, strength: 10, skill: 10, luck: 4, defense: 4, resistance: 3, speed: 5 },
           currentHp: 9,
           equippedWeaponId: "iron-sword",
         }),
@@ -155,7 +154,7 @@ describe("combat preview", () => {
           id: "defender",
           team: "enemy",
           position: { x: 2, y: 1 },
-          stats: { maxHp: 20, strength: 7, skill: 7, magic: 0, intelligence: 0, defense: 4, resistance: 2, speed: 4 },
+          stats: { maxHp: 20, strength: 7, skill: 7, luck: 3, defense: 4, resistance: 2, speed: 4 },
           currentHp: 20,
           equippedWeaponId: "iron-sword",
         }),
@@ -164,7 +163,8 @@ describe("combat preview", () => {
 
     const preview = getCombatPreview(runtime, "attacker", "defender");
 
-    expect(preview.attackerDamage).toBe(10);
+    expect(preview.attackerMinDamage).toBe(14);
+    expect(preview.attackerMaxDamage).toBe(17);
   });
 
   it("respects weapon range when determining whether a defender can counter", () => {
@@ -174,14 +174,14 @@ describe("combat preview", () => {
           id: "archer",
           team: "player",
           position: { x: 1, y: 1 },
-          stats: { maxHp: 18, strength: 7, skill: 7, magic: 0, intelligence: 1, defense: 3, resistance: 2, speed: 5 },
+          stats: { maxHp: 18, strength: 7, skill: 7, luck: 3, defense: 3, resistance: 2, speed: 5 },
           equippedWeaponId: "iron-bow",
         }),
         createUnit({
           id: "fighter",
           team: "enemy",
           position: { x: 3, y: 1 },
-          stats: { maxHp: 20, strength: 7, skill: 7, magic: 0, intelligence: 0, defense: 4, resistance: 2, speed: 4 },
+          stats: { maxHp: 20, strength: 7, skill: 7, luck: 3, defense: 4, resistance: 2, speed: 4 },
           equippedWeaponId: "iron-sword",
         }),
       ]),
@@ -189,19 +189,19 @@ describe("combat preview", () => {
 
     const preview = getCombatPreview(runtime, "archer", "fighter");
 
-    expect(preview.attackerDamage).toBeGreaterThan(0);
+    expect(preview.attackerMaxDamage).toBeGreaterThan(0);
     expect(preview.defenderCanCounter).toBe(false);
-    expect(preview.defenderDamage).toBe(0);
+    expect(preview.defenderMaxDamage).toBe(0);
   });
 
-  it("uses weapon weight to lower effective speed and defense", () => {
+  it("uses skill for the floor, speed for the ceiling, and complexity to tighten the range", () => {
     const runtime = createInitialRuntimeState(
       createTestMap([
         createUnit({
           id: "sword-user",
           team: "player",
           position: { x: 1, y: 1 },
-          stats: { maxHp: 20, strength: 8, skill: 8, magic: 0, intelligence: 1, defense: 6, resistance: 2, speed: 8 },
+          stats: { maxHp: 20, strength: 8, skill: 8, luck: 5, defense: 6, resistance: 2, speed: 8 },
           equippedWeaponId: "iron-sword",
         }),
         createUnit({
@@ -209,7 +209,7 @@ describe("combat preview", () => {
           team: "enemy",
           classId: "light-raider",
           position: { x: 2, y: 1 },
-          stats: { maxHp: 22, strength: 1, skill: 5, magic: 0, intelligence: 0, defense: 6, resistance: 1, speed: 6 },
+          stats: { maxHp: 22, strength: 1, skill: 5, luck: 2, defense: 6, resistance: 1, speed: 6 },
           equippedWeaponId: "war-axe",
           inventory: ["war-axe"],
           weaponProficiencies: {
@@ -221,7 +221,9 @@ describe("combat preview", () => {
 
     const preview = getCombatPreview(runtime, "sword-user", "axe-user");
 
-    expect(preview.attackerDamage).toBe(13);
-    expect(preview.defenderDamage).toBe(6);
+    expect(preview.attackerMinDamage).toBe(11);
+    expect(preview.attackerMaxDamage).toBe(14);
+    expect(preview.defenderMinDamage).toBe(0);
+    expect(preview.defenderMaxDamage).toBe(3);
   });
 });

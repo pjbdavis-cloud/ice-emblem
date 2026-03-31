@@ -64,8 +64,39 @@ const byClassAndTeam = Object.fromEntries(
 
 if (byClassAndTeam.prince?.player?.idle) {
   byClassAndTeam.prince.player.idle = {
-    ...byClassAndTeam.prince.player.idle,
+    src: "/sprites/units/lord/player-idle.png",
+    frameCount: 1,
     frameDurationMs: 180,
+    frameWidth: 64,
+    frameHeight: 64,
+  };
+  byClassAndTeam.prince.player.walk = {
+    src: "/sprites/units/lord/player-walk.png",
+    frameCount: 4,
+    frameDurationMs: 120,
+    frameWidth: 64,
+    frameHeight: 64,
+  };
+  byClassAndTeam.prince.player.attack = {
+    src: "/sprites/units/lord/player-attack.png",
+    frameCount: 3,
+    frameDurationMs: 110,
+    frameWidth: 64,
+    frameHeight: 64,
+  };
+  byClassAndTeam.prince.player.hurt = {
+    src: "/sprites/units/lord/player-hurt.png",
+    frameCount: 2,
+    frameDurationMs: 140,
+    frameWidth: 64,
+    frameHeight: 64,
+  };
+  byClassAndTeam.prince.player.death = {
+    src: "/sprites/units/lord/player-death.png",
+    frameCount: 4,
+    frameDurationMs: 120,
+    frameWidth: 64,
+    frameHeight: 64,
   };
 }
 

@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const MAP_WIDTH = 15;
-const MAP_HEIGHT = 10;
+const MAP_WIDTH = 20;
+const MAP_HEIGHT = 15;
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
@@ -23,12 +23,27 @@ test("stages and cancels a move through real canvas interaction", async ({ page 
   await clickTile(page, 1, 4);
   await clickTile(page, 1, 3);
 
-  await expect(page.getByText("1,3")).toBeVisible();
+  await expect(page.getByText("Aster at 1,3")).toBeVisible();
   await expect(page.getByRole("button", { name: "Wait" })).toBeVisible();
 
   await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "Wait" })).toBeHidden();
   await expectSelectedPanelToContain(page, "Aster");
+});
+
+test("attack target mode still allows hovering enemies in range", async ({ page }) => {
+  await setLethalArcherScenario(page);
+
+  await clickTile(page, 1, 2);
+  await clickTile(page, 1, 1);
+  await expect(page.getByText("Mira at 1,1")).toBeVisible();
+
+  await page.getByRole("button", { name: "Attack", exact: true }).click();
+  await expect(page.getByText("Select a target to attack.")).toBeVisible();
+
+  await hoverTile(page, 3, 1);
+  await expectSectionToContain(page, "Hover", "Bandit");
+  await expectSectionToContain(page, "Combat Preview", "Mira vs Bandit");
 });
 
 test("hovering updates the hover panel separately from the selected panel", async ({ page }) => {
@@ -83,7 +98,7 @@ test("a defeated unit no longer appears on the board after lethal combat resolve
   await setDefeatedFighterScenario(page);
 
   await hoverTile(page, 3, 1);
-  await expectSectionToContain(page, "Hover", "Position: 3,1");
+  await expectSectionToContain(page, "Hover", "Tile: 3,1");
 });
 
 async function clickTile(page: Page, x: number, y: number) {

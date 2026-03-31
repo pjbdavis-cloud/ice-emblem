@@ -1,4 +1,4 @@
-import { canUnitStrikeTarget, getCombatPreview } from "../combat/preview";
+import { canUnitStrikeTarget, getCombatPreview, rollDamageRange } from "../combat/preview";
 import type {
   GameAction,
   Position,
@@ -84,45 +84,7 @@ export function applyAction(state: RuntimeGameState, action: GameAction): Runtim
         return draft;
       });
     case "attackUnit":
-      return commitState(state, (draft) => {
-        const attacker = draft.units[action.attackerId];
-        const defender = draft.units[action.defenderId];
-
-        if (
-          !attacker ||
-          !defender ||
-          attacker.team !== draft.phase ||
-          defender.team === draft.phase ||
-          attacker.hasActed ||
-          attacker.isDefeated ||
-          defender.isDefeated ||
-          !canUnitAttackTarget(draft, action.attackerId, action.defenderId)
-        ) {
-          return draft;
-        }
-
-        const preview = getCombatPreview(draft, action.attackerId, action.defenderId);
-        if (preview.attackerDamage <= 0) {
-          return draft;
-        }
-
-        defender.currentHp = Math.max(0, defender.currentHp - preview.attackerDamage);
-        if (defender.currentHp === 0) {
-          defender.isDefeated = true;
-        }
-
-        if (preview.defenderCanCounter) {
-          attacker.currentHp = Math.max(0, attacker.currentHp - preview.defenderDamage);
-          if (attacker.currentHp === 0) {
-            attacker.isDefeated = true;
-          }
-        }
-
-        attacker.hasMoved = true;
-        attacker.hasActed = true;
-        draft.selectedUnitId = undefined;
-        return maybeAdvancePhase(draft);
-      });
+      return commitState(state, (draft) => resolveAttackInState(draft, action.attackerId, action.defenderId));
     case "waitUnit":
       return commitState(state, (draft) => {
         const unit = draft.units[action.unitId];
@@ -163,6 +125,12 @@ export function previewNextEnemyAction(
 
   const result = executeEnemyTurnWithPresentation(state, nextEnemy.id);
   const nextState = result.nextState;
+  if (nextState.phase !== "enemy") {
+    return {
+      nextState,
+      presentationEvents: result.presentationEvents,
+    };
+  }
   const remainingEnemy = Object.values(nextState.units).some(
     (unit) => unit.team === "enemy" && !unit.isDefeated && !unit.hasActed,
   );
@@ -193,26 +161,28 @@ export function buildPlayerActionPresentation(
   }
 
   if (action.type === "attackUnit") {
-    const attacker = nextState.units[action.attackerId];
-    const defender = nextState.units[action.defenderId];
-    if (attacker && defender && canUnitAttackTarget(nextState, attacker.id, defender.id)) {
-      const preview = getCombatPreview(nextState, attacker.id, defender.id);
-      if (preview.attackerDamage > 0) {
-        presentationEvents.push({
-          type: "combat",
-          attackerId: attacker.id,
-          defenderId: defender.id,
-          defenderCanCounter: preview.defenderCanCounter,
-          attackerFromHp: attacker.currentHp,
-          attackerToHp: Math.max(0, attacker.currentHp - preview.defenderDamage),
-          defenderFromHp: defender.currentHp,
-          defenderToHp: Math.max(0, defender.currentHp - preview.attackerDamage),
-        });
-      }
-    }
-  }
+    const resolvedCombat = resolveAttackInState(nextState, action.attackerId, action.defenderId);
+    const attackerBefore = nextState.units[action.attackerId];
+    const defenderBefore = nextState.units[action.defenderId];
+    const attackerAfter = resolvedCombat.units[action.attackerId];
+    const defenderAfter = resolvedCombat.units[action.defenderId];
 
-  nextState = applyAction(nextState, action);
+    if (attackerBefore && defenderBefore && attackerAfter && defenderAfter) {
+      presentationEvents.push({
+        type: "combat",
+        attackerId: attackerBefore.id,
+        defenderId: defenderBefore.id,
+        defenderCanCounter: attackerAfter.currentHp < attackerBefore.currentHp,
+        attackerFromHp: attackerBefore.currentHp,
+        attackerToHp: attackerAfter.currentHp,
+        defenderFromHp: defenderBefore.currentHp,
+        defenderToHp: defenderAfter.currentHp,
+      });
+    }
+    nextState = resolvedCombat;
+  } else {
+    nextState = applyAction(nextState, action);
+  }
   return { nextState, presentationEvents };
 }
 
@@ -348,42 +318,88 @@ function resolveAttackWithPresentation(
 
   const attackerFromHp = attacker.currentHp;
   const defenderFromHp = defender.currentHp;
-  const preview = getCombatPreview(nextState, attackerId, defenderId);
-  if (preview.attackerDamage <= 0) {
+  const resolvedState = resolveAttackInState(nextState, attackerId, defenderId);
+  const resolvedAttacker = resolvedState.units[attackerId];
+  const resolvedDefender = resolvedState.units[defenderId];
+
+  if (!resolvedAttacker || !resolvedDefender || resolvedDefender.currentHp === defenderFromHp) {
     return { nextState, presentationEvents: existingEvents };
   }
-
-  defender.currentHp = Math.max(0, defender.currentHp - preview.attackerDamage);
-  if (defender.currentHp === 0) {
-    defender.isDefeated = true;
-  }
-
-  if (preview.defenderCanCounter) {
-    attacker.currentHp = Math.max(0, attacker.currentHp - preview.defenderDamage);
-    if (attacker.currentHp === 0) {
-      attacker.isDefeated = true;
-    }
-  }
-
-  attacker.hasMoved = true;
-  attacker.hasActed = true;
-  nextState.selectedUnitId = undefined;
   return {
-    nextState,
+    nextState: resolvedState,
     presentationEvents: [
       ...withMoveAttackPause(existingEvents, attackerId),
       {
         type: "combat",
         attackerId,
         defenderId,
-        defenderCanCounter: preview.defenderCanCounter,
+        defenderCanCounter: resolvedAttacker.currentHp < attackerFromHp,
         attackerFromHp,
-        attackerToHp: attacker.currentHp,
+        attackerToHp: resolvedAttacker.currentHp,
         defenderFromHp,
-        defenderToHp: defender.currentHp,
+        defenderToHp: resolvedDefender.currentHp,
       },
     ],
   };
+}
+
+function resolveAttackInState(
+  state: RuntimeGameState,
+  attackerId: string,
+  defenderId: string,
+): RuntimeGameState {
+  const attacker = state.units[attackerId];
+  const defender = state.units[defenderId];
+
+  if (
+    !attacker ||
+    !defender ||
+    attacker.team !== state.phase ||
+    defender.team === state.phase ||
+    attacker.hasActed ||
+    attacker.isDefeated ||
+    defender.isDefeated ||
+    !canUnitAttackTarget(state, attackerId, defenderId)
+  ) {
+    return state;
+  }
+
+  const preview = getCombatPreview(state, attackerId, defenderId);
+  if (preview.attackerMaxDamage <= 0) {
+    return state;
+  }
+
+  const nextState = cloneRuntimeState(state);
+  const nextAttacker = nextState.units[attackerId];
+  const nextDefender = nextState.units[defenderId];
+  if (!nextAttacker || !nextDefender) {
+    return state;
+  }
+
+  const attackerDamage = rollDamageRange({
+    min: preview.attackerMinDamage,
+    max: preview.attackerMaxDamage,
+  });
+  nextDefender.currentHp = Math.max(0, nextDefender.currentHp - attackerDamage);
+  if (nextDefender.currentHp === 0) {
+    nextDefender.isDefeated = true;
+  }
+
+  if (preview.defenderCanCounter) {
+    const defenderDamage = rollDamageRange({
+      min: preview.defenderMinDamage,
+      max: preview.defenderMaxDamage,
+    });
+    nextAttacker.currentHp = Math.max(0, nextAttacker.currentHp - defenderDamage);
+    if (nextAttacker.currentHp === 0) {
+      nextAttacker.isDefeated = true;
+    }
+  }
+
+  nextAttacker.hasMoved = true;
+  nextAttacker.hasActed = true;
+  nextState.selectedUnitId = undefined;
+  return maybeAdvancePhase(nextState);
 }
 
 function resolveWait(state: RuntimeGameState, unitId: string): RuntimeGameState {

@@ -7,8 +7,7 @@ const statLine = (
   maxHp: number,
   strength: number,
   skill: number,
-  magic: number,
-  intelligence: number,
+  luck: number,
   defense: number,
   resistance: number,
   speed: number,
@@ -16,8 +15,7 @@ const statLine = (
   maxHp,
   strength,
   skill,
-  magic,
-  intelligence,
+  luck,
   defense,
   resistance,
   speed,
@@ -42,9 +40,9 @@ function createTestMap(units: UnitDefinition[]): BattleMapDefinition {
         tier: 1,
         movement: 5,
         learnableDisciplines: ["axe"],
-        baseStats: statLine(22, 7, 5, 0, 0, 3, 1, 5),
-        growthRates: statLine(100, 45, 35, 0, 25, 15, 5, 120),
-        statCaps: statLine(24, 8, 12, 2, 6, 5, 3, 7),
+        baseStats: statLine(22, 7, 5, 3, 3, 1, 5),
+        growthRates: statLine(100, 45, 35, 30, 15, 5, 120),
+        statCaps: statLine(24, 8, 12, 8, 5, 3, 7),
       },
       {
         id: "mage",
@@ -52,13 +50,13 @@ function createTestMap(units: UnitDefinition[]): BattleMapDefinition {
         tier: 1,
         movement: 5,
         learnableDisciplines: ["elemental_magic"],
-        baseStats: statLine(17, 1, 1, 6, 6, 2, 5, 5),
-        growthRates: statLine(55, 10, 10, 60, 55, 20, 45, 45),
-        statCaps: statLine(34, 8, 10, 22, 22, 12, 18, 20),
+        baseStats: statLine(17, 6, 1, 4, 2, 5, 5),
+        growthRates: statLine(55, 60, 10, 35, 20, 45, 45),
+        statCaps: statLine(34, 22, 10, 24, 12, 18, 20),
       },
     ],
     weapons: [
-      { id: "iron-axe", name: "Iron Axe", category: "axe", might: 7, weight: 3, minRange: 1, maxRange: 1, requiredRank: "E" },
+      { id: "iron-axe", name: "Iron Axe", category: "axe", might: 7, complexity: 3, minRange: 1, maxRange: 1, requiredRank: "E" },
     ],
     units,
   };
@@ -72,7 +70,7 @@ function createUnit(overrides: Partial<UnitDefinition> & Pick<UnitDefinition, "i
     team: overrides.team,
     level: overrides.level ?? 1,
     tier: overrides.tier ?? 1,
-    stats: overrides.stats ?? statLine(22, 7, 5, 0, 0, 3, 1, 5),
+    stats: overrides.stats ?? statLine(22, 7, 5, 3, 3, 1, 5),
     currentHp: overrides.currentHp ?? (overrides.stats?.maxHp ?? 22),
     position: overrides.position,
     inventory: overrides.inventory ?? ["iron-axe"],
@@ -91,13 +89,13 @@ describe("levelUpUnit", () => {
           id: "fighter",
           team: "player",
           position: { x: 1, y: 1 },
-          stats: statLine(18, 4, 2, 0, 0, 1, 0, 3),
+          stats: statLine(18, 4, 2, 1, 1, 0, 3),
           currentHp: 18,
         }),
       ]),
     );
 
-    expect(runtime.units.fighter.stats).toEqual(statLine(22, 7, 5, 0, 0, 3, 1, 5));
+    expect(runtime.units.fighter.stats).toEqual(statLine(22, 7, 5, 3, 3, 1, 5));
     expect(runtime.units.fighter.currentHp).toBe(18);
   });
 
@@ -108,7 +106,7 @@ describe("levelUpUnit", () => {
           id: "fighter",
           team: "player",
           position: { x: 1, y: 1 },
-          stats: statLine(22, 7, 5, 0, 0, 3, 1, 5),
+          stats: statLine(22, 7, 5, 3, 3, 1, 5),
           currentHp: 18,
         }),
       ]),
@@ -118,16 +116,15 @@ describe("levelUpUnit", () => {
       maxHp: 88,
       strength: 20,
       skill: 10,
-      magic: 0,
-      intelligence: 90,
+      luck: 50,
       defense: 50,
       resistance: 90,
       speed: 70,
     });
 
-    expect(result.statGains).toEqual(statLine(1, 1, 1, 0, 0, 0, 0, 1));
+    expect(result.statGains).toEqual(statLine(1, 1, 1, 0, 0, 0, 1));
     expect(result.nextState.units.fighter.level).toBe(2);
-    expect(result.nextState.units.fighter.stats).toEqual(statLine(23, 8, 6, 0, 0, 3, 1, 6));
+    expect(result.nextState.units.fighter.stats).toEqual(statLine(23, 8, 6, 3, 3, 1, 6));
     expect(result.nextState.units.fighter.currentHp).toBe(19);
   });
 
@@ -157,7 +154,7 @@ describe("levelUpUnit", () => {
           id: "fighter",
           team: "player",
           position: { x: 1, y: 1 },
-          stats: statLine(23, 8, 11, 0, 0, 4, 1, 7),
+          stats: statLine(23, 8, 11, 7, 4, 1, 7),
           currentHp: 23,
         }),
       ]),
@@ -167,14 +164,13 @@ describe("levelUpUnit", () => {
       maxHp: 0,
       strength: 0,
       skill: 0,
-      magic: 0,
-      intelligence: 99,
+      luck: 0,
       defense: 0,
       resistance: 0,
       speed: 0,
     });
 
-    expect(result.nextState.units.fighter.stats).toEqual(statLine(24, 8, 12, 0, 0, 5, 2, 7));
+    expect(result.nextState.units.fighter.stats).toEqual(statLine(24, 8, 12, 8, 5, 2, 7));
     expect(result.nextState.units.fighter.currentHp).toBe(24);
   });
 
@@ -194,15 +190,14 @@ describe("levelUpUnit", () => {
       maxHp: 0,
       strength: 0,
       skill: 0,
-      magic: 0,
-      intelligence: 0,
+      luck: 0,
       defense: 0,
       resistance: 0,
       speed: 0,
     });
 
-    expect(result.statGains).toEqual(statLine(0, 0, 0, 0, 0, 0, 0, 0));
+    expect(result.statGains).toEqual(statLine(0, 0, 0, 0, 0, 0, 0));
     expect(result.nextState.units.mystery.level).toBe(1);
-    expect(result.nextState.units.mystery.stats).toEqual(statLine(22, 7, 5, 0, 0, 3, 1, 5));
+    expect(result.nextState.units.mystery.stats).toEqual(statLine(22, 7, 5, 3, 3, 1, 5));
   });
 });

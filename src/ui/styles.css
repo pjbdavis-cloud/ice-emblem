@@ -14,6 +14,7 @@
 body {
   margin: 0;
   min-width: 320px;
+  overflow: hidden;
 }
 
 button {
@@ -21,11 +22,15 @@ button {
 }
 
 .app-shell {
-  min-height: 100vh;
-  padding: 12px 16px;
+  height: 100vh;
+  overflow: hidden;
+  padding: 10px 14px;
 }
 
 .battle-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   margin: 0 auto;
   max-width: 1400px;
 }
@@ -35,7 +40,7 @@ button {
   display: flex;
   gap: 16px;
   justify-content: space-between;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .battle-actions {
@@ -62,8 +67,10 @@ button {
 .layout {
   align-items: start;
   display: grid;
-  gap: 16px;
-  grid-template-columns: minmax(0, 2.1fr) minmax(420px, 1.1fr);
+  flex: 1;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1.85fr) minmax(460px, 1.15fr);
+  min-height: 0;
 }
 
 .map-card,
@@ -78,25 +85,121 @@ button {
 .map-card {
   align-items: center;
   display: flex;
+  height: 100%;
   justify-content: center;
-  min-height: calc(100vh - 110px);
-  overflow: hidden;
+  min-height: 0;
+  padding: 4px 6px;
   position: relative;
 }
 
-.battle-canvas-shell {
+.map-board-stack {
   align-items: center;
   display: flex;
-  height: 100%;
+  flex-direction: column;
+  width: 100%;
+}
+
+.map-board-frame {
+  display: flex;
   justify-content: center;
+  max-height: 100%;
+  position: relative;
+  width: 100%;
+}
+
+.battle-canvas-shell {
+  align-items: flex-start;
+  display: flex;
+  height: auto;
+  justify-content: center;
+  padding-bottom: 58px;
+  position: relative;
   width: 100%;
 }
 
 .battle-canvas {
   cursor: pointer;
   display: block;
-  max-height: calc(100vh - 142px);
+  max-height: calc(100vh - 176px);
   max-width: 100%;
+}
+
+.camera-controls {
+  align-items: center;
+  background: rgba(255, 247, 232, 0.92);
+  border: 1px solid rgba(84, 50, 17, 0.22);
+  border-radius: 999px;
+  bottom: 2px;
+  box-shadow: 0 10px 22px rgba(45, 24, 11, 0.16);
+  display: flex;
+  gap: 8px;
+  right: 0;
+  padding: 8px 10px;
+  position: absolute;
+  z-index: 2;
+}
+
+.camera-controls button {
+  background: #8f2d17;
+  border: 0;
+  border-radius: 999px;
+  color: #fff6ea;
+  cursor: pointer;
+  font-weight: 700;
+  height: 32px;
+  width: 32px;
+}
+
+.camera-controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.camera-zoom-label {
+  font-size: 0.84rem;
+  font-weight: 700;
+  min-width: 52px;
+  text-align: center;
+}
+
+.camera-edge {
+  pointer-events: none;
+  position: absolute;
+  z-index: 1;
+}
+
+.camera-edge-left,
+.camera-edge-right {
+  bottom: 0;
+  top: 0;
+  width: 22px;
+}
+
+.camera-edge-top,
+.camera-edge-bottom {
+  left: 0;
+  right: 0;
+  height: 22px;
+}
+
+.camera-edge-left {
+  background: linear-gradient(90deg, rgba(34, 22, 12, 0.28), transparent);
+  left: 0;
+}
+
+.camera-edge-right {
+  background: linear-gradient(270deg, rgba(34, 22, 12, 0.28), transparent);
+  right: 0;
+}
+
+.camera-edge-top {
+  background: linear-gradient(180deg, rgba(34, 22, 12, 0.24), transparent);
+  top: 0;
+}
+
+.camera-edge-bottom {
+  background: linear-gradient(0deg, rgba(34, 22, 12, 0.24), transparent);
+  bottom: 0;
 }
 
 .map-action-menu {
@@ -109,8 +212,45 @@ button {
   min-width: 150px;
   padding: 12px;
   position: absolute;
-  transform: translate(-50%, -112%);
+  max-width: min(220px, calc(100% - 24px));
   z-index: 3;
+}
+
+.map-targeting-banner {
+  align-items: center;
+  background: rgba(255, 247, 232, 0.96);
+  border: 1px solid rgba(84, 50, 17, 0.24);
+  border-radius: 999px;
+  box-shadow: 0 10px 24px rgba(45, 24, 11, 0.2);
+  display: flex;
+  gap: 10px;
+  left: 0;
+  max-width: min(420px, calc(100% - 124px));
+  padding: 8px 12px;
+  position: absolute;
+  width: fit-content;
+  z-index: 3;
+  bottom: 36px;
+}
+
+.map-targeting-banner span {
+  color: rgba(35, 24, 13, 0.86);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.map-targeting-banner button {
+  background: #8f2d17;
+  border: 0;
+  border-radius: 999px;
+  color: #fff6ea;
+  cursor: pointer;
+  padding: 6px 12px;
+}
+
+.map-targeting-banner button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .map-action-menu button {
@@ -205,7 +345,8 @@ button {
   display: grid;
   gap: 12px;
   grid-template-rows: minmax(0, 1.5fr) minmax(0, 0.9fr);
-  height: calc(100vh - 110px);
+  height: 100%;
+  min-height: 0;
 }
 
 .card {
@@ -226,6 +367,126 @@ button {
   height: 100%;
   min-height: 0;
   overflow: hidden;
+}
+
+.unit-card {
+  border-left: 4px solid rgba(84, 50, 17, 0.18);
+}
+
+.unit-card-player {
+  border-left-color: rgba(34, 102, 196, 0.82);
+}
+
+.unit-card-ally {
+  border-left-color: rgba(72, 142, 208, 0.72);
+}
+
+.unit-card-enemy {
+  border-left-color: rgba(198, 56, 43, 0.84);
+}
+
+.unit-card-neutral {
+  border-left-color: rgba(84, 50, 17, 0.18);
+}
+
+.unit-summary {
+  display: grid;
+  gap: 8px;
+}
+
+.unit-summary-empty {
+  gap: 6px;
+}
+
+.unit-summary-header {
+  align-items: start;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.unit-summary-name,
+.unit-summary-class,
+.unit-summary-hp,
+.unit-meta-list p,
+.unit-stat-grid p,
+.unit-detail-block p,
+.unit-footer-list p {
+  margin: 0;
+}
+
+.unit-summary-name {
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.05;
+}
+
+.unit-summary-class {
+  color: rgba(70, 43, 22, 0.72);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+  text-transform: uppercase;
+}
+
+.unit-summary-hp {
+  font-size: 0.8rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.unit-meta-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.unit-meta-list p,
+.unit-detail-value,
+.unit-footer-list p {
+  font-size: 0.82rem;
+  line-height: 1.2;
+}
+
+.unit-stat-grid {
+  display: grid;
+  gap: 4px 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.unit-stat-grid p {
+  background: rgba(255, 247, 232, 0.72);
+  border: 1px solid rgba(84, 50, 17, 0.12);
+  border-radius: 8px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.15;
+  padding: 4px 6px;
+  text-align: center;
+}
+
+.unit-detail-block {
+  display: grid;
+  gap: 2px;
+}
+
+.unit-detail-label {
+  color: rgba(70, 43, 22, 0.68);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.unit-detail-value {
+  word-break: break-word;
+}
+
+.unit-footer-list {
+  display: grid;
+  gap: 4px;
+  padding-top: 2px;
 }
 
 .debug-card {

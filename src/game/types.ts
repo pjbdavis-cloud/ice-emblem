@@ -31,8 +31,7 @@ export type Stats = {
   maxHp: number;
   strength: number;
   skill: number;
-  magic: number;
-  intelligence: number;
+  luck: number;
   defense: number;
   resistance: number;
   speed: number;
@@ -76,7 +75,7 @@ export type WeaponDefinition = {
   name: string;
   category: WeaponDiscipline;
   might: number;
-  weight: number;
+  complexity: number;
   minRange: 1 | 2;
   maxRange: 1 | 2;
   requiredRank: WeaponRank;
@@ -109,13 +108,8 @@ export type UnitState = UnitDefinition & {
 export type RulesConfig = {
   gameMode: GameMode;
   undoLimit: number;
-  minimumDamage: number;
   injuryThresholdRatio: number;
   injuryPenaltyPercent: number;
-  speedBonusThresholds: Array<{
-    speedDifference: number;
-    bonusDamage: number;
-  }>;
 };
 
 export type RuntimeGameState = {
@@ -140,8 +134,10 @@ export type GameAction =
   | { type: "endPhase" };
 
 export type CombatPreview = {
-  attackerDamage: number;
-  defenderDamage: number;
+  attackerMinDamage: number;
+  attackerMaxDamage: number;
+  defenderMinDamage: number;
+  defenderMaxDamage: number;
   defenderCanCounter: boolean;
 };
 

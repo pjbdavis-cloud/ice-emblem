@@ -1,9 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Position, RuntimeGameState, Team, TileDefinition, UnitState } from "../../game/types";
 import type { PresentationEvent } from "../presentation/types";
-import { resolveUnitSprite } from "../sprites/unitSprites";
-import { useSpriteImages } from "../sprites/useSpriteImages";
-import type { UnitSpriteDefinition, UnitSpritePose } from "../sprites/types";
 
 type BattleCanvasProps = {
   runtime: RuntimeGameState;
@@ -17,6 +14,10 @@ type BattleCanvasProps = {
   moveHighlightTiles: Position[];
   moveHighlightTeam?: Team;
   attackHighlightTiles: Position[];
+  isAttackTargeting: boolean;
+  targetableEnemyTiles: Position[];
+  hoveredAttackTargetTile?: Position;
+  selectedEnemyThreatTiles: Position[];
   hoveredMovePath: Position[];
   enemyThreatOutlineTiles: Position[];
   previewMove?: {
@@ -36,8 +37,12 @@ type BattleCanvasProps = {
 };
 
 type BoardMetrics = {
-  width: number;
-  height: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  boardWidth: number;
+  boardHeight: number;
+  visibleColumns: number;
+  visibleRows: number;
   tileSize: number;
 };
 
@@ -66,14 +71,18 @@ type DisplayedUnitState = {
   hasActed: boolean;
   opacity: number;
   shouldRender: boolean;
-  spritePose: UnitSpritePose;
 };
 
 const MAX_CANVAS_HEIGHT_OFFSET = 142;
-const PLAYER_MOVE_ANIMATION_MS = 800;
-const ENEMY_MOVE_ANIMATION_MS = 800;
+const PLAYER_MOVE_ANIMATION_MS = 150;
+const ENEMY_MOVE_ANIMATION_MS = 150;
 const ATTACK_ANIMATION_MS = 1200;
 const DEATH_ANIMATION_MS = 700;
+const CAMERA_VIEWPORT_PRESETS = [
+  { label: "15x20", rows: 15, columns: 20 },
+  { label: "12x16", rows: 12, columns: 16 },
+  { label: "9x12", rows: 9, columns: 12 },
+] as const;
 
 export function BattleCanvas(props: BattleCanvasProps) {
   const {
@@ -88,6 +97,10 @@ export function BattleCanvas(props: BattleCanvasProps) {
     moveHighlightTiles,
     moveHighlightTeam,
     attackHighlightTiles,
+    isAttackTargeting,
+    targetableEnemyTiles,
+    hoveredAttackTargetTile,
+    selectedEnemyThreatTiles,
     hoveredMovePath,
     enemyThreatOutlineTiles,
     previewMove,
@@ -105,9 +118,16 @@ export function BattleCanvas(props: BattleCanvasProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const frameRef = useRef<number | undefined>(undefined);
+  const [viewportPresetIndex, setViewportPresetIndex] = useState(0);
+  const [cameraOffsetTiles, setCameraOffsetTiles] = useState({ x: 0, y: 0 });
+  const cameraOffsetRef = useRef({ x: 0, y: 0 });
   const [metrics, setMetrics] = useState<BoardMetrics>({
-    width: width * 64,
-    height: height * 64,
+    viewportWidth: width * 64,
+    viewportHeight: height * 64,
+    boardWidth: width * 64,
+    boardHeight: height * 64,
+    visibleColumns: width,
+    visibleRows: height,
     tileSize: 64,
   });
   const [activePresentation, setActivePresentation] = useState<ActivePresentation | undefined>();
@@ -122,19 +142,74 @@ export function BattleCanvas(props: BattleCanvasProps) {
     () => new Set(attackHighlightTiles.map(toPositionKey)),
     [attackHighlightTiles],
   );
+  const targetableEnemySet = useMemo(
+    () => new Set(targetableEnemyTiles.map(toPositionKey)),
+    [targetableEnemyTiles],
+  );
+  const selectedEnemyThreatSet = useMemo(
+    () => new Set(selectedEnemyThreatTiles.map(toPositionKey)),
+    [selectedEnemyThreatTiles],
+  );
   const enemyThreatOutlineSet = useMemo(
     () => new Set(enemyThreatOutlineTiles.map(toPositionKey)),
     [enemyThreatOutlineTiles],
   );
-  const spriteDefinitions = useMemo(
-    () =>
-      units.flatMap((unit) => {
-        const poses: UnitSpritePose[] = ["idle", "walk", "attack", "hurt", "death"];
-        return poses.map((pose) => resolveUnitSprite(unit, pose).definition);
-      }),
-    [units],
-  );
-  const spriteImages = useSpriteImages(spriteDefinitions);
+  const isZoomLocked =
+    runtime.phase === "enemy" ||
+    Boolean(activePresentation) ||
+    Boolean(activePreviewMove && !activePreviewMove.completed);
+
+  function drawCurrentFrame(cameraOffsetOverride?: { x: number; y: number }) {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return;
+    }
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+      return;
+    }
+
+    const dpr = window.devicePixelRatio || 1;
+    const targetWidth = Math.floor(metrics.viewportWidth * dpr);
+    const targetHeight = Math.floor(metrics.viewportHeight * dpr);
+    if (canvas.width !== targetWidth) {
+      canvas.width = targetWidth;
+    }
+    if (canvas.height !== targetHeight) {
+      canvas.height = targetHeight;
+    }
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    context.clearRect(0, 0, metrics.viewportWidth, metrics.viewportHeight);
+
+    drawBoard(context, {
+      runtime,
+      tiles,
+      width,
+      height,
+      units,
+      hoveredTile,
+      selectedTile,
+      stagedTile,
+      moveHighlightSet,
+      moveHighlightTeam,
+      attackHighlightSet,
+      isAttackTargeting,
+      targetableEnemySet,
+      hoveredAttackTargetTile,
+      selectedEnemyThreatSet,
+      hoveredMovePath,
+      enemyThreatOutlineSet,
+      activePreviewMove,
+      metrics,
+      activePresentation,
+      presentationQueue,
+      grayLockUnitIds,
+      pendingDefeatedUnitIds,
+      animationClock,
+      cameraOffsetTiles: cameraOffsetOverride ?? cameraOffsetRef.current,
+    });
+  }
 
   useEffect(() => {
     const wrapper = wrapperRef.current;
@@ -146,13 +221,19 @@ export function BattleCanvas(props: BattleCanvasProps) {
       const bounds = wrapper.getBoundingClientRect();
       const maxWidth = bounds.width;
       const maxHeight = Math.max(240, window.innerHeight - MAX_CANVAS_HEIGHT_OFFSET);
-      const tileSize = Math.floor(Math.min(maxWidth / width, maxHeight / height));
-      const safeTileSize = Math.max(28, tileSize);
+      const preset = CAMERA_VIEWPORT_PRESETS[viewportPresetIndex];
+      const visibleColumns = Math.min(width, preset.columns);
+      const visibleRows = Math.min(height, preset.rows);
+      const tileSize = Math.max(28, Math.floor(Math.min(maxWidth / visibleColumns, maxHeight / visibleRows)));
 
       setMetrics({
-        width: safeTileSize * width,
-        height: safeTileSize * height,
-        tileSize: safeTileSize,
+        viewportWidth: tileSize * visibleColumns,
+        viewportHeight: tileSize * visibleRows,
+        boardWidth: tileSize * width,
+        boardHeight: tileSize * height,
+        visibleColumns,
+        visibleRows,
+        tileSize,
       });
     };
 
@@ -166,7 +247,70 @@ export function BattleCanvas(props: BattleCanvasProps) {
       resizeObserver.disconnect();
       window.removeEventListener("resize", updateMetrics);
     };
-  }, [height, width]);
+  }, [height, viewportPresetIndex, width]);
+
+  useEffect(() => {
+    setCameraOffsetTiles((current) => {
+      const clamped = clampCameraOffsetTiles(current, metrics, width, height);
+      cameraOffsetRef.current = clamped;
+      if (clamped.x === current.x && clamped.y === current.y) {
+        return current;
+      }
+      return clamped;
+    });
+  }, [height, metrics, width]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (
+        event.target instanceof HTMLElement &&
+        (event.target.tagName === "INPUT" ||
+          event.target.tagName === "TEXTAREA" ||
+          event.target.isContentEditable)
+      ) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      if ((key === "+" || key === "=") && !isZoomLocked) {
+        event.preventDefault();
+        changeViewportPreset(1);
+        return;
+      }
+
+      if ((key === "-" || key === "_") && !isZoomLocked) {
+        event.preventDefault();
+        changeViewportPreset(-1);
+        return;
+      }
+
+      if (key === "arrowleft" || key === "a") {
+        event.preventDefault();
+        panCamera(-1, 0);
+        return;
+      }
+
+      if (key === "arrowright" || key === "d") {
+        event.preventDefault();
+        panCamera(1, 0);
+        return;
+      }
+
+      if (key === "arrowup" || key === "w") {
+        event.preventDefault();
+        panCamera(0, -1);
+        return;
+      }
+
+      if (key === "arrowdown" || key === "s") {
+        event.preventDefault();
+        panCamera(0, 1);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [height, isZoomLocked, metrics, viewportPresetIndex, width]);
 
   useEffect(() => {
     if (presentationQueue.length === 0 || activePresentation) {
@@ -288,46 +432,8 @@ export function BattleCanvas(props: BattleCanvasProps) {
     presentationQueue,
   ]);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) {
-      return;
-    }
-
-    const context = canvas.getContext("2d");
-    if (!context) {
-      return;
-    }
-
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.floor(metrics.width * dpr);
-    canvas.height = Math.floor(metrics.height * dpr);
-    context.setTransform(dpr, 0, 0, dpr, 0, 0);
-    context.clearRect(0, 0, metrics.width, metrics.height);
-
-    drawBoard(context, {
-      runtime,
-      tiles,
-      width,
-      height,
-      units,
-      hoveredTile,
-      selectedTile,
-      stagedTile,
-      moveHighlightSet,
-      moveHighlightTeam,
-      attackHighlightSet,
-      hoveredMovePath,
-      enemyThreatOutlineSet,
-      activePreviewMove,
-      metrics,
-      activePresentation,
-      presentationQueue,
-      grayLockUnitIds,
-      pendingDefeatedUnitIds,
-      animationClock,
-      spriteImages,
-    });
+  useLayoutEffect(() => {
+    drawCurrentFrame();
   }, [
     activePresentation,
     animationClock,
@@ -337,7 +443,6 @@ export function BattleCanvas(props: BattleCanvasProps) {
     activePreviewMove,
     grayLockUnitIds,
     pendingDefeatedUnitIds,
-    spriteImages,
     height,
     hoveredTile,
     metrics,
@@ -350,6 +455,7 @@ export function BattleCanvas(props: BattleCanvasProps) {
     tiles,
     units,
     width,
+    cameraOffsetTiles,
   ]);
 
   return (
@@ -358,9 +464,9 @@ export function BattleCanvas(props: BattleCanvasProps) {
         ref={canvasRef}
         data-testid="battle-canvas"
         className="battle-canvas"
-        style={{ width: metrics.width, height: metrics.height }}
+        style={{ width: metrics.viewportWidth, height: metrics.viewportHeight }}
         onClick={(event) => {
-          const position = getTileFromPointer(event, metrics.tileSize, width, height);
+          const position = getTileFromPointer(event, metrics, cameraOffsetTiles, width, height);
           if (position) {
             onTileClick(position);
           }
@@ -371,12 +477,114 @@ export function BattleCanvas(props: BattleCanvasProps) {
         }}
         onMouseLeave={() => onTileHover(undefined)}
         onMouseMove={(event) => {
-          const position = getTileFromPointer(event, metrics.tileSize, width, height);
+          const position = getTileFromPointer(event, metrics, cameraOffsetTiles, width, height);
           onTileHover(position);
         }}
+        onWheel={(event) => {
+          if (isZoomLocked) {
+            return;
+          }
+          event.preventDefault();
+          if (event.deltaY < 0) {
+            changeViewportPreset(1);
+            return;
+          }
+
+          if (event.deltaY > 0) {
+            changeViewportPreset(-1);
+          }
+        }}
       />
+      <div className="camera-controls" aria-label="Map camera controls">
+        <button
+          type="button"
+          aria-label="Zoom out"
+          disabled={isZoomLocked || viewportPresetIndex <= 0}
+          onClick={() => changeViewportPreset(-1)}
+        >
+          -
+        </button>
+        <span className="camera-zoom-label">{CAMERA_VIEWPORT_PRESETS[viewportPresetIndex].label}</span>
+        <button
+          type="button"
+          aria-label="Zoom in"
+          disabled={isZoomLocked || viewportPresetIndex >= CAMERA_VIEWPORT_PRESETS.length - 1}
+          onClick={() => changeViewportPreset(1)}
+        >
+          +
+        </button>
+      </div>
+      {cameraOffsetTiles.x > 0 ? <div className="camera-edge camera-edge-left" /> : null}
+      {cameraOffsetTiles.x < getMaxCameraOffsetTiles(metrics, width, height).x ? (
+        <div className="camera-edge camera-edge-right" />
+      ) : null}
+      {cameraOffsetTiles.y > 0 ? <div className="camera-edge camera-edge-top" /> : null}
+      {cameraOffsetTiles.y < getMaxCameraOffsetTiles(metrics, width, height).y ? (
+        <div className="camera-edge camera-edge-bottom" />
+      ) : null}
     </div>
   );
+
+  function panCamera(deltaX: number, deltaY: number) {
+    const current = cameraOffsetRef.current;
+    const next = clampCameraOffsetTiles(
+      { x: current.x + deltaX, y: current.y + deltaY },
+      metrics,
+      width,
+      height,
+    );
+    if (next.x === current.x && next.y === current.y) {
+      return;
+    }
+
+    cameraOffsetRef.current = next;
+    drawCurrentFrame(next);
+    setCameraOffsetTiles((state) => {
+      if (state.x === next.x && state.y === next.y) {
+        return state;
+      }
+      return next;
+    });
+  }
+
+  function changeViewportPreset(delta: number) {
+    const nextIndex = clamp(viewportPresetIndex + delta, 0, CAMERA_VIEWPORT_PRESETS.length - 1);
+    if (nextIndex === viewportPresetIndex) {
+      return;
+    }
+
+    const focusPosition = selectedTile
+      ? { x: selectedTile.x, y: selectedTile.y }
+      : {
+          x: cameraOffsetRef.current.x + metrics.visibleColumns / 2,
+          y: cameraOffsetRef.current.y + metrics.visibleRows / 2,
+        };
+    const nextPreset = CAMERA_VIEWPORT_PRESETS[nextIndex];
+    const nextVisibleColumns = Math.min(width, nextPreset.columns);
+    const nextVisibleRows = Math.min(height, nextPreset.rows);
+    const nextOffset = clampCameraOffsetTiles(
+      {
+        x: Math.round(focusPosition.x - nextVisibleColumns / 2),
+        y: Math.round(focusPosition.y - nextVisibleRows / 2),
+      },
+      {
+        ...metrics,
+        visibleColumns: nextVisibleColumns,
+        visibleRows: nextVisibleRows,
+      },
+      width,
+      height,
+    );
+
+    cameraOffsetRef.current = nextOffset;
+    setCameraOffsetTiles((current) => {
+      if (current.x === nextOffset.x && current.y === nextOffset.y) {
+        return current;
+      }
+      return nextOffset;
+    });
+    setViewportPresetIndex(nextIndex);
+  }
 }
 
 function drawBoard(
@@ -393,6 +601,10 @@ function drawBoard(
     moveHighlightSet: Set<string>;
     moveHighlightTeam?: Team;
     attackHighlightSet: Set<string>;
+    isAttackTargeting: boolean;
+    targetableEnemySet: Set<string>;
+    hoveredAttackTargetTile?: Position;
+    selectedEnemyThreatSet: Set<string>;
     hoveredMovePath: Position[];
     enemyThreatOutlineSet: Set<string>;
     activePreviewMove?: ActivePreviewMove;
@@ -402,7 +614,7 @@ function drawBoard(
     grayLockUnitIds: string[];
     pendingDefeatedUnitIds: string[];
     animationClock: number;
-    spriteImages: Record<string, HTMLImageElement>;
+    cameraOffsetTiles: { x: number; y: number };
   },
 ) {
   const {
@@ -417,6 +629,10 @@ function drawBoard(
     moveHighlightSet,
     moveHighlightTeam,
     attackHighlightSet,
+    isAttackTargeting,
+    targetableEnemySet,
+    hoveredAttackTargetTile,
+    selectedEnemyThreatSet,
     hoveredMovePath,
     enemyThreatOutlineSet,
     activePreviewMove,
@@ -426,8 +642,20 @@ function drawBoard(
     grayLockUnitIds,
     pendingDefeatedUnitIds,
     animationClock,
-    spriteImages,
+    cameraOffsetTiles,
   } = input;
+
+  const boardOriginX =
+    width <= metrics.visibleColumns
+      ? (metrics.viewportWidth - metrics.boardWidth) / 2
+      : -cameraOffsetTiles.x * metrics.tileSize;
+  const boardOriginY =
+    height <= metrics.visibleRows
+      ? (metrics.viewportHeight - metrics.boardHeight) / 2
+      : -cameraOffsetTiles.y * metrics.tileSize;
+
+  context.save();
+  context.translate(boardOriginX, boardOriginY);
 
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -437,24 +665,20 @@ function drawBoard(
       const py = y * metrics.tileSize;
 
       context.fillStyle = getTerrainColor(tile.terrain);
-      roundRect(context, px + 2, py + 2, metrics.tileSize - 4, metrics.tileSize - 4, 12);
-      context.fill();
+      context.fillRect(px, py, metrics.tileSize, metrics.tileSize);
 
-      context.strokeStyle = "rgba(63, 43, 12, 0.16)";
+      context.strokeStyle = "rgba(255, 255, 255, 0.22)";
       context.lineWidth = 1;
-      roundRect(context, px + 2, py + 2, metrics.tileSize - 4, metrics.tileSize - 4, 12);
-      context.stroke();
+      context.strokeRect(px + 0.5, py + 0.5, metrics.tileSize - 1, metrics.tileSize - 1);
 
       if (moveHighlightSet.has(key)) {
         context.fillStyle = getMoveHighlightColor(moveHighlightTeam);
-        roundRect(context, px + 4, py + 4, metrics.tileSize - 8, metrics.tileSize - 8, 10);
-        context.fill();
+        context.fillRect(px, py, metrics.tileSize, metrics.tileSize);
       }
 
       if (attackHighlightSet.has(key)) {
         context.fillStyle = "rgba(163, 35, 29, 0.2)";
-        roundRect(context, px + 6, py + 6, metrics.tileSize - 12, metrics.tileSize - 12, 10);
-        context.fill();
+        context.fillRect(px, py, metrics.tileSize, metrics.tileSize);
       }
 
       if (enemyThreatOutlineSet.has(key)) {
@@ -465,22 +689,22 @@ function drawBoard(
 
       if (selectedTile && selectedTile.x === x && selectedTile.y === y) {
         context.strokeStyle = "#194d8d";
-        context.lineWidth = 4;
-        roundRect(context, px + 4, py + 4, metrics.tileSize - 8, metrics.tileSize - 8, 10);
-        context.stroke();
+        context.lineWidth = 3;
+        context.strokeRect(px + 1.5, py + 1.5, metrics.tileSize - 3, metrics.tileSize - 3);
       }
 
       if (stagedTile && stagedTile.x === x && stagedTile.y === y) {
         context.strokeStyle = "#d08a13";
-        context.lineWidth = 4;
-        roundRect(context, px + 10, py + 10, metrics.tileSize - 20, metrics.tileSize - 20, 10);
-        context.stroke();
+        context.lineWidth = 3;
+        context.strokeRect(px + 5.5, py + 5.5, metrics.tileSize - 11, metrics.tileSize - 11);
       }
 
       if (hoveredTile && hoveredTile.x === x && hoveredTile.y === y) {
-        context.fillStyle = "rgba(255, 255, 255, 0.14)";
-        roundRect(context, px + 2, py + 2, metrics.tileSize - 4, metrics.tileSize - 4, 12);
-        context.fill();
+        context.fillStyle = "rgba(255, 255, 255, 0.12)";
+        context.fillRect(px, py, metrics.tileSize, metrics.tileSize);
+        context.strokeStyle = "rgba(255, 255, 255, 0.45)";
+        context.lineWidth = 2;
+        context.strokeRect(px + 1, py + 1, metrics.tileSize - 2, metrics.tileSize - 2);
       }
 
       context.fillStyle = "rgba(58, 38, 15, 0.65)";
@@ -531,9 +755,18 @@ function drawBoard(
       displayedState,
       activePresentation,
       animationClock,
-      spriteImages,
+      isAttackTargeting,
+      selectedEnemyThreatSet.has(toPositionKey(unit.position)),
+      targetableEnemySet.has(toPositionKey(unit.position)),
+      Boolean(
+        hoveredAttackTargetTile &&
+        hoveredAttackTargetTile.x === unit.position.x &&
+        hoveredAttackTargetTile.y === unit.position.y,
+      ),
     );
   }
+
+  context.restore();
 }
 
 function drawUnit(
@@ -544,7 +777,10 @@ function drawUnit(
   displayedState: DisplayedUnitState,
   activePresentation: ActivePresentation | undefined,
   animationClock: number,
-  spriteImages: Record<string, HTMLImageElement>,
+  isAttackTargeting: boolean,
+  isThreatSelectedEnemy: boolean,
+  isTargetableEnemy: boolean,
+  isHoveredAttackTarget: boolean,
 ) {
   const combatMotion = getCombatVisualState(unit.id, activePresentation, animationClock, tileSize);
   const centerX = displayedState.position.x * tileSize + tileSize / 2 + combatMotion.shakeX;
@@ -557,7 +793,9 @@ function drawUnit(
   const barY = centerY - radius - Math.max(10, tileSize * 0.18);
 
   context.save();
-  context.globalAlpha = displayedState.opacity;
+  const dimForInvalidTarget =
+    isAttackTargeting && unit.team === "enemy" && !isTargetableEnemy ? 0.38 : 1;
+  context.globalAlpha = displayedState.opacity * dimForInvalidTarget;
 
   context.fillStyle = "rgba(32, 20, 12, 0.65)";
   roundRect(context, barX, barY, barWidth, barHeight, barHeight / 2);
@@ -574,52 +812,100 @@ function drawUnit(
 
   const unitFillColor = displayedState.hasActed ? "#7b7b7b" : getTeamColor(unit.team);
   const unitStrokeColor = displayedState.hasActed ? "rgba(222, 222, 222, 0.92)" : "rgba(255, 250, 240, 0.9)";
-  const unitTextColor = displayedState.hasActed ? "#f2f2f2" : "#fff8ed";
-  const spriteDefinition = resolveUnitSprite(unit, displayedState.spritePose).definition;
-  const spriteImage = spriteDefinition ? spriteImages[spriteDefinition.src] : undefined;
-  const spriteSize = Math.max(24, tileSize * 0.72);
+  const unitAccentColor = displayedState.hasActed ? "#f1f1f1" : "#fff8ed";
+  const bodyWidth = Math.max(20, tileSize * 0.44);
+  const bodyHeight = Math.max(18, tileSize * 0.36);
+  const headRadius = Math.max(6, tileSize * 0.11);
+  const bodyCenterY = centerY + tileSize * 0.06;
+  const headCenterY = bodyCenterY - bodyHeight * 0.62;
+
+  context.fillStyle = "rgba(18, 12, 8, 0.18)";
+  context.beginPath();
+  context.ellipse(
+    centerX,
+    bodyCenterY + bodyHeight * 0.62,
+    bodyWidth * 0.44,
+    bodyHeight * 0.16,
+    0,
+    0,
+    Math.PI * 2,
+  );
+  context.fill();
 
   context.fillStyle = unitFillColor;
-  if (spriteImage && spriteImage.complete && spriteImage.naturalWidth > 0) {
-    const spriteAlpha = displayedState.hasActed ? 0.5 : 1;
-    context.globalAlpha = displayedState.opacity * spriteAlpha;
-    context.filter = displayedState.hasActed ? "grayscale(1)" : "none";
-    drawSprite(
-      context,
-      spriteImage,
-      centerX,
-      centerY,
-      spriteSize,
-      spriteDefinition,
-      displayedState.spritePose,
-      activePresentation,
-      animationClock,
-    );
-    context.filter = "none";
-    if (displayedState.hasActed) {
-      context.save();
-      context.globalAlpha = displayedState.opacity;
-      context.fillStyle = "rgba(118, 118, 118, 0.16)";
-      context.beginPath();
-      context.arc(centerX, centerY, radius + Math.max(4, tileSize * 0.12), 0, Math.PI * 2);
-      context.fill();
-      context.restore();
-    }
-  } else {
-    context.beginPath();
-    context.arc(centerX, centerY, radius, 0, Math.PI * 2);
-    context.fill();
+  context.beginPath();
+  context.ellipse(centerX, bodyCenterY, bodyWidth / 2, bodyHeight / 2, 0, 0, Math.PI * 2);
+  context.fill();
+  context.strokeStyle = unitStrokeColor;
+  context.lineWidth = 2;
+  context.stroke();
 
-    context.strokeStyle = unitStrokeColor;
-    context.lineWidth = 2;
+  if (isTargetableEnemy) {
+    context.strokeStyle = isHoveredAttackTarget ? "rgba(236, 56, 46, 0.98)" : "rgba(214, 46, 36, 0.85)";
+    context.lineWidth = isHoveredAttackTarget ? Math.max(3, tileSize * 0.07) : Math.max(2, tileSize * 0.05);
+    context.beginPath();
+    context.ellipse(
+      centerX,
+      bodyCenterY,
+      bodyWidth * 0.7,
+      bodyHeight * 0.76,
+      0,
+      0,
+      Math.PI * 2,
+    );
     context.stroke();
 
-    context.fillStyle = unitTextColor;
-    context.font = `700 ${Math.max(12, tileSize * 0.28)}px Trebuchet MS`;
-    context.textAlign = "center";
-    context.textBaseline = "middle";
-    context.fillText(unit.name[0] ?? "?", centerX, centerY + 1);
+    if (isHoveredAttackTarget) {
+      context.strokeStyle = "rgba(255, 214, 209, 0.95)";
+      context.lineWidth = Math.max(1.5, tileSize * 0.03);
+      context.beginPath();
+      context.ellipse(
+        centerX,
+        bodyCenterY,
+        bodyWidth * 0.84,
+        bodyHeight * 0.9,
+        0,
+        0,
+        Math.PI * 2,
+      );
+      context.stroke();
+    }
   }
+
+  context.fillStyle = unitFillColor;
+  context.beginPath();
+  context.arc(centerX, headCenterY, headRadius, 0, Math.PI * 2);
+  context.fill();
+  context.strokeStyle = unitStrokeColor;
+  context.lineWidth = 2;
+  context.stroke();
+
+  if (isThreatSelectedEnemy) {
+    context.save();
+    context.strokeStyle = "rgba(255, 206, 198, 0.96)";
+    context.lineWidth = Math.max(2.5, tileSize * 0.05);
+    context.setLineDash([Math.max(6, tileSize * 0.12), Math.max(4, tileSize * 0.08)]);
+    context.strokeRect(
+      displayedState.position.x * tileSize + 2,
+      displayedState.position.y * tileSize + 2,
+      tileSize - 4,
+      tileSize - 4,
+    );
+    context.restore();
+  }
+
+  context.strokeStyle = unitAccentColor;
+  context.lineWidth = Math.max(1.5, tileSize * 0.03);
+  context.beginPath();
+  context.moveTo(centerX, bodyCenterY - bodyHeight * 0.18);
+  context.lineTo(centerX, bodyCenterY + bodyHeight * 0.28);
+  context.moveTo(centerX - bodyWidth * 0.18, bodyCenterY);
+  context.lineTo(centerX + bodyWidth * 0.18, bodyCenterY);
+  context.moveTo(centerX, bodyCenterY + bodyHeight * 0.26);
+  context.lineTo(centerX - bodyWidth * 0.14, bodyCenterY + bodyHeight * 0.56);
+  context.moveTo(centerX, bodyCenterY + bodyHeight * 0.26);
+  context.lineTo(centerX + bodyWidth * 0.14, bodyCenterY + bodyHeight * 0.56);
+  context.stroke();
   context.restore();
 }
 
@@ -733,33 +1019,7 @@ function getDisplayedUnitState(
     hasActed,
     opacity,
     shouldRender,
-    spritePose: getDisplayedSpritePose(unit.id, activePresentation),
   };
-}
-
-function getDisplayedSpritePose(
-  unitId: string,
-  activePresentation: ActivePresentation | undefined,
-): UnitSpritePose {
-  if (!activePresentation) {
-    return "idle";
-  }
-
-  if (activePresentation.event.type === "move" && activePresentation.event.unitId === unitId) {
-    return "walk";
-  }
-
-  if (activePresentation.event.type === "combat") {
-    if (activePresentation.event.attackerId === unitId) {
-      return activePresentation.event.attackerToHp <= 0 ? "death" : "attack";
-    }
-
-    if (activePresentation.event.defenderId === unitId) {
-      return activePresentation.event.defenderToHp <= 0 ? "death" : "hurt";
-    }
-  }
-
-  return "idle";
 }
 
 function getCombatVisualState(
@@ -909,19 +1169,58 @@ function getCombatDeathTail(event: Extract<PresentationEvent, { type: "combat" }
 
 function getTileFromPointer(
   event: React.MouseEvent<HTMLCanvasElement>,
-  tileSize: number,
+  metrics: BoardMetrics,
+  cameraOffsetTiles: { x: number; y: number },
   width: number,
   height: number,
 ): Position | undefined {
   const bounds = event.currentTarget.getBoundingClientRect();
-  const x = Math.floor((event.clientX - bounds.left) / tileSize);
-  const y = Math.floor((event.clientY - bounds.top) / tileSize);
+  const scaleX = bounds.width / metrics.viewportWidth;
+  const scaleY = bounds.height / metrics.viewportHeight;
+  const displayedTileWidth = metrics.tileSize * scaleX;
+  const displayedTileHeight = metrics.tileSize * scaleY;
+  const displayedBoardWidth = metrics.boardWidth * scaleX;
+  const displayedBoardHeight = metrics.boardHeight * scaleY;
+  const boardOriginX =
+    width <= metrics.visibleColumns
+      ? (bounds.width - displayedBoardWidth) / 2
+      : -cameraOffsetTiles.x * displayedTileWidth;
+  const boardOriginY =
+    height <= metrics.visibleRows
+      ? (bounds.height - displayedBoardHeight) / 2
+      : -cameraOffsetTiles.y * displayedTileHeight;
+  const x = Math.floor((event.clientX - bounds.left - boardOriginX) / displayedTileWidth);
+  const y = Math.floor((event.clientY - bounds.top - boardOriginY) / displayedTileHeight);
 
   if (x < 0 || y < 0 || x >= width || y >= height) {
     return undefined;
   }
 
   return { x, y };
+}
+
+function getMaxCameraOffsetTiles(metrics: BoardMetrics, width: number, height: number) {
+  return {
+    x: Math.max(0, width - metrics.visibleColumns),
+    y: Math.max(0, height - metrics.visibleRows),
+  };
+}
+
+function clampCameraOffsetTiles(
+  offset: { x: number; y: number },
+  metrics: BoardMetrics,
+  width: number,
+  height: number,
+) {
+  const maxOffset = getMaxCameraOffsetTiles(metrics, width, height);
+  return {
+    x: clamp(offset.x, 0, maxOffset.x),
+    y: clamp(offset.y, 0, maxOffset.y),
+  };
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function toPositionKey(position: Position): string {
@@ -934,6 +1233,8 @@ function getTerrainColor(terrain: TileDefinition["terrain"]): string {
       return "#92b175";
     case "fort":
       return "#b4865b";
+    case "wall":
+      return "#5f6b78";
     default:
       return "#d4bc82";
   }
@@ -1141,66 +1442,4 @@ function getPathPosition(path: Position[], progress: number): VisualPosition {
     x: from.x + (to.x - from.x) * segmentProgress,
     y: from.y + (to.y - from.y) * segmentProgress,
   };
-}
-
-function drawSprite(
-  context: CanvasRenderingContext2D,
-  image: HTMLImageElement,
-  centerX: number,
-  centerY: number,
-  size: number,
-  definition: UnitSpriteDefinition | undefined,
-  pose: UnitSpritePose,
-  activePresentation: ActivePresentation | undefined,
-  animationClock: number,
-) {
-  const frameCount = Math.max(1, definition?.frameCount ?? 1);
-  const sourceWidth =
-    definition?.frameWidth ?? Math.floor(image.naturalWidth / frameCount) ?? image.naturalWidth;
-  const sourceHeight = definition?.frameHeight ?? image.naturalHeight;
-  const frameIndex = getSpriteFrameIndex(frameCount, definition?.frameDurationMs, pose, activePresentation, animationClock);
-  const sourceX = Math.min(frameIndex, frameCount - 1) * sourceWidth;
-  const sourceY = 0;
-  const drawX = centerX - size / 2;
-  const drawY = centerY - size / 2;
-  const offsetX = definition?.frameOffsetX ?? 0;
-  const offsetY = definition?.frameOffsetY ?? 0;
-
-  context.imageSmoothingEnabled = false;
-  context.drawImage(
-    image,
-    sourceX,
-    sourceY,
-    sourceWidth,
-    sourceHeight,
-    drawX + offsetX,
-    drawY + offsetY,
-    size,
-    size,
-  );
-}
-
-function getSpriteFrameIndex(
-  frameCount: number,
-  frameDurationMs: number | undefined,
-  pose: UnitSpritePose,
-  activePresentation: ActivePresentation | undefined,
-  animationClock: number,
-): number {
-  if (frameCount <= 1) {
-    return 0;
-  }
-
-  const msPerFrame = Math.max(60, frameDurationMs ?? 120);
-
-  if (!activePresentation) {
-    if (pose === "idle") {
-      return Math.floor(animationClock / msPerFrame) % frameCount;
-    }
-
-    return 0;
-  }
-
-  const elapsed = Math.max(0, animationClock - activePresentation.startedAt);
-  return Math.floor(elapsed / msPerFrame) % frameCount;
 }

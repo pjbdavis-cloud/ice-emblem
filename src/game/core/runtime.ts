@@ -10,14 +10,8 @@ import { applyClassStatMinimums } from "./stats";
 const defaultRules: RulesConfig = {
   gameMode: "classic",
   undoLimit: 3,
-  minimumDamage: 0,
   injuryThresholdRatio: 0.5,
   injuryPenaltyPercent: 0.1,
-  speedBonusThresholds: [
-    { speedDifference: 8, bonusDamage: 3 },
-    { speedDifference: 5, bonusDamage: 2 },
-    { speedDifference: 3, bonusDamage: 1 },
-  ],
 };
 
 export function createInitialRuntimeState(map: BattleMapDefinition): RuntimeGameState {

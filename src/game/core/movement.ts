@@ -111,12 +111,8 @@ export function getAttackReachPreviewPositions(state: RuntimeGameState, unitId: 
         }
 
         const occupant = getUnitAtPosition(state, position);
-        if (occupant && occupant.team === unit.team) {
-          continue;
-        }
-
         const key = toPositionKey(position);
-        if (blockedPositions.has(key)) {
+        if (blockedPositions.has(key) && !occupant) {
           continue;
         }
 

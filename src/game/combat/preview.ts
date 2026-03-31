@@ -1,6 +1,11 @@
 import { getManhattanDistance } from "../core/state";
 import type { CombatPreview, RuntimeGameState, UnitState, WeaponDefinition } from "../types";
 
+export type DamageRange = {
+  min: number;
+  max: number;
+};
+
 export function getCombatPreview(
   state: RuntimeGameState,
   attackerId: string,
@@ -11,8 +16,10 @@ export function getCombatPreview(
 
   if (!attacker || !defender) {
     return {
-      attackerDamage: 0,
-      defenderDamage: 0,
+      attackerMinDamage: 0,
+      attackerMaxDamage: 0,
+      defenderMinDamage: 0,
+      defenderMaxDamage: 0,
       defenderCanCounter: false,
     };
   }
@@ -22,20 +29,23 @@ export function getCombatPreview(
   const distance = getManhattanDistance(attacker.position, defender.position);
 
   const attackerCanHit = attackerWeapon ? isInRange(attackerWeapon, distance) : false;
-  const attackerDamage =
+  const attackerRange =
     attackerCanHit && attackerWeapon
-      ? calculateDamage(state, attacker, defender, attackerWeapon)
-      : 0;
-  const defenderSurvives = defender.currentHp - attackerDamage > 0;
+      ? calculateDamageRange(state, attacker, defender, attackerWeapon)
+      : { min: 0, max: 0 };
+  const defenderSurvives = defender.currentHp - attackerRange.max > 0;
   const defenderCanCounter =
     defenderSurvives && defenderWeapon ? isInRange(defenderWeapon, distance) : false;
+  const defenderRange =
+    defenderCanCounter && defenderWeapon
+      ? calculateDamageRange(state, defender, attacker, defenderWeapon)
+      : { min: 0, max: 0 };
 
   return {
-    attackerDamage,
-    defenderDamage:
-      defenderCanCounter && defenderWeapon
-        ? calculateDamage(state, defender, attacker, defenderWeapon)
-        : 0,
+    attackerMinDamage: attackerRange.min,
+    attackerMaxDamage: attackerRange.max,
+    defenderMinDamage: defenderRange.min,
+    defenderMaxDamage: defenderRange.max,
     defenderCanCounter,
   };
 }
@@ -58,67 +68,49 @@ export function getEquippedWeapon(state: RuntimeGameState, unit: UnitState): Wea
   return state.map.weapons.find((weapon) => weapon.id === unit.equippedWeaponId);
 }
 
-function calculateDamage(
+export function calculateDamageRange(
   state: RuntimeGameState,
   attacker: UnitState,
   defender: UnitState,
   weapon: WeaponDefinition,
-): number {
-  const speedBonus = getSpeedBonus(
-    state,
-    getEffectiveSpeed(state, attacker),
-    getEffectiveSpeed(state, defender),
-  );
+): DamageRange {
   const triangleBonus = getTriangleBonus(defender, weapon, state);
   const isMagicAttack = isMagicDiscipline(weapon.category) || weapon.category === "healing";
-  const offenseStat = isMagicAttack ? attacker.stats.magic : attacker.stats.skill;
-  const defenseStat = getEffectiveDefense(state, defender, isMagicAttack);
-  const injuryAdjustedAttack = applyInjuryPenalty(state, attacker, offenseStat);
-  const injuryAdjustedDefense = applyInjuryPenalty(state, defender, defenseStat);
-
-  return Math.max(
-    state.rules.minimumDamage,
-    injuryAdjustedAttack + weapon.might + triangleBonus + speedBonus - injuryAdjustedDefense,
+  const offenseStat = applyInjuryPenalty(state, attacker, attacker.stats.strength);
+  const guardStat = applyInjuryPenalty(
+    state,
+    defender,
+    isMagicAttack ? defender.stats.resistance : defender.stats.defense,
   );
+  const baseDamage = offenseStat + weapon.might + triangleBonus - guardStat;
+  const minDamage = Math.max(0, baseDamage + Math.floor(attacker.stats.skill / 2) - weapon.complexity);
+  let maxDamage = Math.max(
+    minDamage,
+    baseDamage + Math.floor(attacker.stats.speed / 2) - Math.floor(weapon.complexity / 2),
+  );
+
+  if (maxDamage >= 3 && maxDamage - minDamage < 3) {
+    maxDamage = minDamage + 3;
+  }
+
+  return {
+    min: minDamage,
+    max: maxDamage,
+  };
+}
+
+export function rollDamageRange(range: DamageRange, randomValue = Math.random()): number {
+  if (range.max <= range.min) {
+    return range.min;
+  }
+
+  const bucketCount = range.max - range.min + 1;
+  const normalized = Math.min(0.999999, Math.max(0, randomValue));
+  return range.min + Math.floor(normalized * bucketCount);
 }
 
 function isInRange(weapon: WeaponDefinition, distance: number): boolean {
   return distance >= weapon.minRange && distance <= weapon.maxRange;
-}
-
-function getSpeedBonus(state: RuntimeGameState, attackerSpeed: number, defenderSpeed: number): number {
-  const difference = attackerSpeed - defenderSpeed;
-  const match = state.rules.speedBonusThresholds.find(
-    (threshold) => difference >= threshold.speedDifference,
-  );
-
-  return match?.bonusDamage ?? 0;
-}
-
-function getEffectiveSpeed(state: RuntimeGameState, unit: UnitState): number {
-  return Math.max(0, unit.stats.speed - getWeaponBurdenPenalty(state, unit));
-}
-
-function getEffectiveDefense(
-  state: RuntimeGameState,
-  unit: UnitState,
-  isMagicAttack: boolean,
-): number {
-  const defensiveStat = isMagicAttack ? unit.stats.resistance : unit.stats.defense;
-  return Math.max(0, defensiveStat - getWeaponBurdenPenalty(state, unit));
-}
-
-function getWeaponBurdenPenalty(state: RuntimeGameState, unit: UnitState): number {
-  const weapon = getEquippedWeapon(state, unit);
-  if (!weapon) {
-    return 0;
-  }
-
-  const mitigation = isMagicDiscipline(weapon.category) || weapon.category === "healing"
-    ? unit.stats.intelligence
-    : unit.stats.strength;
-
-  return Math.max(0, weapon.weight - mitigation);
 }
 
 function getTriangleBonus(
@@ -165,22 +157,10 @@ function getMagicTriangleBonus(
     "light_magic:dark_magic",
     "dark_magic:light_magic",
   ]);
-  const neutralPairs = new Set([
-    "elemental_magic:elemental_magic",
-    "elemental_magic:light_magic",
-    "elemental_magic:dark_magic",
-    "light_magic:elemental_magic",
-    "dark_magic:elemental_magic",
-  ]);
-
   const pair = `${attackerCategory}:${defenderCategory}`;
 
   if (winningPairs.has(pair)) {
     return 1;
-  }
-
-  if (neutralPairs.has(pair)) {
-    return 0;
   }
 
   return 0;

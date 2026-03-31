@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyAction,
   createInitialRuntimeState,
+  getAttackReachPreviewPositions,
   getMovementPathPreview,
   getReachablePositions,
   previewNextEnemyAction,
@@ -12,8 +13,7 @@ const statLine = (
   maxHp: number,
   strength: number,
   skill: number,
-  magic: number,
-  intelligence: number,
+  luck: number,
   defense: number,
   resistance: number,
   speed: number,
@@ -21,8 +21,7 @@ const statLine = (
   maxHp,
   strength,
   skill,
-  magic,
-  intelligence,
+  luck,
   defense,
   resistance,
   speed,
@@ -47,9 +46,9 @@ function createTestMap(units: UnitDefinition[]): BattleMapDefinition {
         tier: 1,
         movement: 5,
         learnableDisciplines: ["sword"],
-        baseStats: statLine(20, 6, 6, 1, 2, 5, 2, 7),
-        growthRates: statLine(75, 35, 50, 20, 20, 40, 25, 55),
-        statCaps: statLine(40, 20, 20, 10, 10, 18, 14, 22),
+        baseStats: statLine(20, 6, 6, 4, 5, 2, 7),
+        growthRates: statLine(75, 35, 50, 40, 40, 25, 55),
+        statCaps: statLine(40, 20, 20, 24, 18, 14, 22),
       },
       {
         id: "fighter",
@@ -57,9 +56,9 @@ function createTestMap(units: UnitDefinition[]): BattleMapDefinition {
         tier: 1,
         movement: 5,
         learnableDisciplines: ["sword", "axe"],
-        baseStats: statLine(22, 7, 5, 0, 0, 3, 1, 5),
-        growthRates: statLine(80, 50, 35, 5, 10, 30, 15, 35),
-        statCaps: statLine(44, 22, 18, 6, 6, 16, 10, 18),
+        baseStats: statLine(22, 7, 5, 3, 3, 1, 5),
+        growthRates: statLine(80, 50, 35, 20, 30, 15, 35),
+        statCaps: statLine(44, 22, 18, 22, 16, 10, 18),
       },
       {
         id: "slow-fighter",
@@ -67,9 +66,9 @@ function createTestMap(units: UnitDefinition[]): BattleMapDefinition {
         tier: 1,
         movement: 2,
         learnableDisciplines: ["sword", "axe"],
-        baseStats: statLine(22, 7, 5, 0, 0, 3, 1, 3),
-        growthRates: statLine(80, 50, 35, 5, 10, 30, 15, 20),
-        statCaps: statLine(44, 22, 18, 6, 6, 16, 10, 14),
+        baseStats: statLine(22, 7, 5, 2, 3, 1, 3),
+        growthRates: statLine(80, 50, 35, 20, 30, 15, 20),
+        statCaps: statLine(44, 22, 18, 18, 16, 10, 14),
       },
       {
         id: "archer",
@@ -77,9 +76,9 @@ function createTestMap(units: UnitDefinition[]): BattleMapDefinition {
         tier: 1,
         movement: 5,
         learnableDisciplines: ["bow"],
-        baseStats: statLine(18, 5, 7, 0, 2, 3, 2, 6),
-        growthRates: statLine(65, 25, 55, 5, 25, 25, 20, 50),
-        statCaps: statLine(36, 18, 22, 6, 12, 14, 12, 22),
+        baseStats: statLine(18, 5, 7, 5, 3, 2, 6),
+        growthRates: statLine(65, 25, 55, 40, 25, 20, 50),
+        statCaps: statLine(36, 18, 22, 24, 14, 12, 22),
       },
       {
         id: "mage",
@@ -87,15 +86,15 @@ function createTestMap(units: UnitDefinition[]): BattleMapDefinition {
         tier: 1,
         movement: 5,
         learnableDisciplines: ["elemental_magic"],
-        baseStats: statLine(17, 1, 1, 6, 6, 2, 5, 5),
-        growthRates: statLine(55, 10, 10, 60, 55, 20, 45, 45),
-        statCaps: statLine(34, 8, 10, 22, 22, 12, 18, 20),
+        baseStats: statLine(17, 6, 1, 4, 2, 5, 5),
+        growthRates: statLine(55, 60, 10, 35, 20, 45, 45),
+        statCaps: statLine(34, 22, 10, 24, 12, 18, 20),
       },
     ],
     weapons: [
-      { id: "iron-sword", name: "Iron Sword", category: "sword", might: 5, weight: 1, minRange: 1, maxRange: 1, requiredRank: "E" },
-      { id: "iron-bow", name: "Iron Bow", category: "bow", might: 6, weight: 2, minRange: 2, maxRange: 2, requiredRank: "E" },
-      { id: "fire-tome", name: "Fire Tome", category: "elemental_magic", might: 5, weight: 2, minRange: 1, maxRange: 2, requiredRank: "E" },
+      { id: "iron-sword", name: "Iron Sword", category: "sword", might: 5, complexity: 1, minRange: 1, maxRange: 1, requiredRank: "E" },
+      { id: "iron-bow", name: "Iron Bow", category: "bow", might: 6, complexity: 2, minRange: 2, maxRange: 2, requiredRank: "E" },
+      { id: "fire-tome", name: "Fire Tome", category: "elemental_magic", might: 5, complexity: 2, minRange: 1, maxRange: 2, requiredRank: "E" },
     ],
     units,
   };
@@ -109,7 +108,7 @@ function createUnit(overrides: Partial<UnitDefinition> & Pick<UnitDefinition, "i
     team: overrides.team,
     level: overrides.level ?? 1,
     tier: overrides.tier ?? 1,
-    stats: overrides.stats ?? { maxHp: 20, strength: 6, skill: 6, magic: 1, intelligence: 2, defense: 4, resistance: 3, speed: 5 },
+    stats: overrides.stats ?? { maxHp: 20, strength: 6, skill: 6, luck: 4, defense: 4, resistance: 3, speed: 5 },
     currentHp: overrides.currentHp ?? (overrides.stats?.maxHp ?? 20),
     position: overrides.position,
     inventory: overrides.inventory ?? ["iron-sword"],
@@ -136,7 +135,7 @@ describe("movement rules", () => {
         id: "player-lead",
         team: "player",
         position: { x: 1, y: 1 },
-        stats: { maxHp: 20, strength: 6, skill: 6, magic: 1, intelligence: 2, defense: 4, resistance: 3, speed: 5 },
+        stats: { maxHp: 20, strength: 6, skill: 6, luck: 4, defense: 4, resistance: 3, speed: 5 },
       }),
     ]);
     map.tiles[1][2] = { terrain: "wall" };
@@ -154,7 +153,7 @@ describe("movement rules", () => {
           id: "player-lead",
           team: "player",
           position: { x: 1, y: 3 },
-          stats: { maxHp: 20, strength: 6, skill: 6, magic: 1, intelligence: 2, defense: 4, resistance: 3, speed: 5 },
+          stats: { maxHp: 20, strength: 6, skill: 6, luck: 4, defense: 4, resistance: 3, speed: 5 },
         }),
         createUnit({
           id: "ally-blocker",
@@ -177,7 +176,7 @@ describe("movement rules", () => {
           id: "player-lead",
           team: "player",
           position: { x: 1, y: 1 },
-          stats: { maxHp: 20, strength: 6, skill: 6, magic: 1, intelligence: 2, defense: 4, resistance: 3, speed: 5 },
+          stats: { maxHp: 20, strength: 6, skill: 6, luck: 4, defense: 4, resistance: 3, speed: 5 },
         }),
         createUnit({
           id: "enemy-wall",
@@ -202,7 +201,7 @@ describe("movement rules", () => {
           id: "player-lead",
           team: "player",
           position: { x: 1, y: 1 },
-          stats: { maxHp: 20, strength: 6, skill: 6, magic: 1, intelligence: 2, defense: 4, resistance: 3, speed: 5 },
+          stats: { maxHp: 20, strength: 6, skill: 6, luck: 4, defense: 4, resistance: 3, speed: 5 },
         }),
       ]),
     );
@@ -217,6 +216,31 @@ describe("movement rules", () => {
       { x: 3, y: 3 },
       { x: 4, y: 3 },
     ]);
+  });
+
+  it("includes allied occupied tiles in attack reach previews", () => {
+    const runtime = createInitialRuntimeState(
+      createTestMap([
+        createUnit({
+          id: "player-archer",
+          team: "player",
+          classId: "archer",
+          equippedWeaponId: "iron-bow",
+          inventory: ["iron-bow"],
+          weaponProficiencies: { bow: "E" },
+          position: { x: 1, y: 1 },
+        }),
+        createUnit({
+          id: "player-ally",
+          team: "player",
+          position: { x: 3, y: 1 },
+        }),
+      ]),
+    );
+
+    const attackReach = getAttackReachPreviewPositions(runtime, "player-archer");
+
+    expect(hasPosition(attackReach, { x: 3, y: 1 })).toBe(true);
   });
 });
 
@@ -269,7 +293,7 @@ describe("enemy decisions and phase progression", () => {
           team: "enemy",
           classId: "slow-fighter",
           position: { x: 5, y: 1 },
-          stats: { maxHp: 20, strength: 6, skill: 6, magic: 0, intelligence: 0, defense: 4, resistance: 2, speed: 5 },
+          stats: { maxHp: 20, strength: 6, skill: 6, luck: 4, defense: 4, resistance: 2, speed: 5 },
           equippedWeaponId: "iron-sword",
         }),
       ]),

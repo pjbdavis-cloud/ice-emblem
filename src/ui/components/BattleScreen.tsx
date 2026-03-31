@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppDispatch, useAppSelector } from "../../app/hooks";
 import { dispatchGameAction, replaceRuntimeState, resetDemoState, undoAction } from "../../app/slices/gameSlice";
-import { getCombatPreview } from "../../game/combat/preview";
+import { getCombatPreview, getEquippedWeapon } from "../../game/combat/preview";
 import {
   buildPlayerActionPresentation,
   canUndo,
@@ -30,7 +30,7 @@ export function BattleScreen() {
   const [hoveredTile, setHoveredTile] = useState<Position | undefined>();
   const [stagedDestination, setStagedDestination] = useState<Position | undefined>();
   const [pendingAction, setPendingAction] = useState<PendingAction>("none");
-  const [showEnemyThreatOverlay, setShowEnemyThreatOverlay] = useState(true);
+  const [selectedEnemyThreatIds, setSelectedEnemyThreatIds] = useState<string[]>([]);
   const [isBoardAnimating, setIsBoardAnimating] = useState(false);
   const [previewMove, setPreviewMove] = useState<
     | {
@@ -59,6 +59,10 @@ export function BattleScreen() {
 
   const selectedUnit = runtime.selectedUnitId ? runtime.units[runtime.selectedUnitId] : undefined;
   const units = Object.values(runtime.units);
+  const enemyUnits = useMemo(
+    () => units.filter((unit) => unit.team === "enemy" && !unit.isDefeated),
+    [units],
+  );
   const pendingDefeatedUnitIds = useMemo(() => {
     if (!pendingRuntimeState) {
       return [];
@@ -160,23 +164,53 @@ export function BattleScreen() {
       return [];
     }
 
-    const sourceState = stagedDestination ? movePreviewState : runtime;
-    return getAttackReachPreviewPositions(sourceState, selectedUnit.id);
+    if (stagedDestination) {
+      return getDirectAttackRangePositions(movePreviewState, selectedUnit.id);
+    }
+
+    return getAttackReachPreviewPositions(runtime, selectedUnit.id);
   }, [movePreviewState, runtime, selectedUnit, stagedDestination]);
-  const attackHighlightTiles = showingSelectedRanges
-    ? selectedAttackPreviewTiles
-    : hoveredAttackPreviewTiles;
+  const attackHighlightTiles =
+    pendingAction === "chooseAttackTarget"
+      ? []
+      : showingSelectedRanges
+        ? selectedAttackPreviewTiles
+        : hoveredAttackPreviewTiles;
+  const targetableEnemyTiles = useMemo(
+    () =>
+      pendingAction === "chooseAttackTarget"
+        ? attackableTargets.map((unit) => ({ x: unit.position.x, y: unit.position.y }))
+        : [],
+    [attackableTargets, pendingAction],
+  );
+  const hoveredAttackTargetTile = hoveredAttackTarget
+    ? { x: hoveredAttackTarget.position.x, y: hoveredAttackTarget.position.y }
+    : undefined;
   const enemyThreatOutlineTiles = useMemo(() => {
-    if (!showEnemyThreatOverlay) {
+    if (selectedEnemyThreatIds.length === 0) {
       return [];
     }
 
     return uniquePositions(
       units
-        .filter((unit) => unit.team === "enemy" && !unit.isDefeated)
+        .filter((unit) => selectedEnemyThreatIds.includes(unit.id) && !unit.isDefeated)
         .flatMap((unit) => getThreatenedPositions(runtime, unit.id)),
     );
-  }, [runtime, showEnemyThreatOverlay, units]);
+  }, [runtime, selectedEnemyThreatIds, units]);
+
+  const selectedEnemyThreatTiles = useMemo(
+    () =>
+      enemyUnits
+        .filter((unit) => selectedEnemyThreatIds.includes(unit.id))
+        .map((unit) => ({ x: unit.position.x, y: unit.position.y })),
+    [enemyUnits, selectedEnemyThreatIds],
+  );
+
+  useEffect(() => {
+    setSelectedEnemyThreatIds((current) =>
+      current.filter((unitId) => runtime.units[unitId] && !runtime.units[unitId].isDefeated && runtime.units[unitId].team === "enemy"),
+    );
+  }, [runtime.units]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -191,10 +225,6 @@ export function BattleScreen() {
         return;
       }
 
-      if (event.code === "Space") {
-        event.preventDefault();
-        setShowEnemyThreatOverlay((current) => !current);
-      }
     }
 
     window.addEventListener("keydown", handleKeyDown);
@@ -296,6 +326,20 @@ export function BattleScreen() {
           <div className="battle-actions">
             <button
               type="button"
+              disabled={isPlayerBannerBlocking || enemyUnits.length === 0}
+              onClick={() => setSelectedEnemyThreatIds(enemyUnits.map((unit) => unit.id))}
+            >
+              Select All Threat
+            </button>
+            <button
+              type="button"
+              disabled={isPlayerBannerBlocking || selectedEnemyThreatIds.length === 0}
+              onClick={() => setSelectedEnemyThreatIds([])}
+            >
+              Select None Threat
+            </button>
+            <button
+              type="button"
               disabled={isPlayerBannerBlocking || !canUndo(runtime)}
               onClick={() => dispatch(undoAction())}
             >
@@ -312,54 +356,73 @@ export function BattleScreen() {
 
         <div className="layout">
           <div className="map-card">
-            {showPhaseBanner ? (
-              <div
-                key={`${phaseBanner.phase}-${phaseBanner.key}`}
-                className={`phase-banner phase-banner-${phaseBanner.phase}`}
-              >
-                <span>{phaseBanner.phase === "player" ? "Player Phase" : "Enemy Phase"}</span>
-              </div>
-            ) : null}
-            <BattleCanvas
-              runtime={runtime}
-              tiles={runtime.map.tiles}
-              width={runtime.map.width}
-              height={runtime.map.height}
-              units={units}
-              hoveredTile={hoveredTile}
-              selectedTile={stagedDestination ?? selectedUnit?.position}
-              stagedTile={stagedDestination}
-              moveHighlightTiles={moveHighlightTiles}
-              moveHighlightTeam={moveHighlightTeam}
-              attackHighlightTiles={attackHighlightTiles}
-              hoveredMovePath={hoveredMovePath}
-              enemyThreatOutlineTiles={enemyThreatOutlineTiles}
-              previewMove={previewMove}
-              presentationQueue={presentationQueue}
-              grayLockUnitIds={grayLockUnitIds}
-              pendingDefeatedUnitIds={pendingDefeatedUnitIds}
-              onAnimationStateChange={setIsBoardAnimating}
-              onPresentationComplete={handlePresentationComplete}
-              onPreviewMoveComplete={() => setIsPreviewMoveReady(true)}
-              onTileClick={handleTileClick}
-              onTileHover={handleTileHover}
-              onCancel={handleCancel}
-            />
-            {selectedUnit && stagedDestination && isPreviewMoveReady ? (
-              <div
-                ref={actionMenuRef}
-                className="map-action-menu"
-                style={getActionMenuStyle(
-                  stagedDestination,
-                  runtime.map.width,
-                  runtime.map.height,
-                )}
-              >
-                <p className="map-action-title">
-                  {stagedDestination.x},{stagedDestination.y}
-                </p>
-                {pendingAction === "chooseAction" ? (
-                  <>
+            <div className="map-board-stack">
+              <div className="map-board-frame">
+                {showPhaseBanner ? (
+                  <div
+                    key={`${phaseBanner.phase}-${phaseBanner.key}`}
+                    className={`phase-banner phase-banner-${phaseBanner.phase}`}
+                  >
+                    <span>{phaseBanner.phase === "player" ? "Player Phase" : "Enemy Phase"}</span>
+                  </div>
+                ) : null}
+                <BattleCanvas
+                  runtime={runtime}
+                  tiles={runtime.map.tiles}
+                  width={runtime.map.width}
+                  height={runtime.map.height}
+                  units={units}
+                  hoveredTile={hoveredTile}
+                  selectedTile={stagedDestination ?? selectedUnit?.position}
+                  moveHighlightTiles={moveHighlightTiles}
+                  moveHighlightTeam={moveHighlightTeam}
+                  attackHighlightTiles={attackHighlightTiles}
+                  isAttackTargeting={pendingAction === "chooseAttackTarget"}
+                  targetableEnemyTiles={targetableEnemyTiles}
+                  hoveredAttackTargetTile={hoveredAttackTargetTile}
+                  selectedEnemyThreatTiles={selectedEnemyThreatTiles}
+                  hoveredMovePath={hoveredMovePath}
+                  enemyThreatOutlineTiles={enemyThreatOutlineTiles}
+                  previewMove={previewMove}
+                  presentationQueue={presentationQueue}
+                  grayLockUnitIds={grayLockUnitIds}
+                  pendingDefeatedUnitIds={pendingDefeatedUnitIds}
+                  onAnimationStateChange={setIsBoardAnimating}
+                  onPresentationComplete={handlePresentationComplete}
+                  onPreviewMoveComplete={() => setIsPreviewMoveReady(true)}
+                  onTileClick={handleTileClick}
+                  onTileHover={handleTileHover}
+                  onCancel={handleCancel}
+                />
+                {selectedUnit && stagedDestination && isPreviewMoveReady && pendingAction === "chooseAttackTarget" ? (
+                  <div className="map-targeting-banner">
+                    <span>Select a target to attack.</span>
+                    <button
+                      type="button"
+                      disabled={isPlayerBannerBlocking}
+                      onClick={() => setPendingAction("chooseAction")}
+                    >
+                      Back
+                    </button>
+                  </div>
+                ) : null}
+                {selectedUnit && stagedDestination && isPreviewMoveReady && pendingAction === "chooseAction" ? (
+                  <div
+                    ref={actionMenuRef}
+                  className="map-action-menu"
+                  style={getActionMenuStyle(
+                      stagedDestination,
+                      runtime.map.width,
+                      runtime.map.height,
+                    )}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      clearStagedAction();
+                    }}
+                  >
+                    <p className="map-action-title">
+                      {selectedUnit.name} at {stagedDestination.x},{stagedDestination.y}
+                    </p>
                     <button
                       type="button"
                       disabled={isPlayerBannerBlocking || attackableTargets.length === 0}
@@ -373,105 +436,65 @@ export function BattleScreen() {
                     <button type="button" disabled={isPlayerBannerBlocking} onClick={handleWait}>
                       Wait
                     </button>
-                  </>
-                ) : (
-                  <>
-                    <p className="map-action-hint">Choose an enemy target.</p>
-                    <button
-                      type="button"
-                      disabled={isPlayerBannerBlocking}
-                      onClick={() => setPendingAction("chooseAction")}
-                    >
-                      Back
-                    </button>
-                  </>
-                )}
+                  </div>
+                ) : null}
               </div>
-            ) : null}
+            </div>
           </div>
 
           <aside className="sidebar">
             <div className="info-panels">
-              <section className="card compact-card">
+              <section className={`card compact-card unit-card ${getUnitCardClassName(hoveredUnit?.team)}`}>
                 <h2>Hover</h2>
                 {hoveredUnit ? (
-                  <>
-                    <p>{hoveredUnit.name}</p>
-                    <p>
-                      HP: {hoveredUnit.currentHp}/{hoveredUnit.stats.maxHp}
-                    </p>
-                    <p>STR: {hoveredUnit.stats.strength}</p>
-                    <p>SKL: {hoveredUnit.stats.skill}</p>
-                    <p>MAG: {hoveredUnit.stats.magic}</p>
-                    <p>INT: {hoveredUnit.stats.intelligence}</p>
-                    <p>DEF: {hoveredUnit.stats.defense}</p>
-                    <p>RES: {hoveredUnit.stats.resistance}</p>
-                    <p>SPD: {hoveredUnit.stats.speed}</p>
-                    <p>MOV: {getUnitMovement(runtime, hoveredUnit)}</p>
-                    <p>
-                      Tile: {hoveredUnit.position.x},{hoveredUnit.position.y}
-                    </p>
-                    <p>
-                      Status: {hoveredUnit.team === "enemy" ? "Enemy" : hoveredUnit.team === "ally" ? "Ally" : "Player"}
-                    </p>
-                    {selectedUnit && hoveredCombatPreview ? (
-                      <>
-                        <p>
-                          Combat: {selectedUnit.name} deals {hoveredCombatPreview.attackerDamage}
-                        </p>
-                        <p>
-                          Counter: {hoveredCombatPreview.defenderCanCounter ? hoveredCombatPreview.defenderDamage : "None"}
-                        </p>
-                      </>
-                    ) : null}
-                  </>
+                  renderUnitSummary(runtime, hoveredUnit, {
+                    footer: selectedUnit && hoveredCombatPreview
+                      ? [
+                          `Combat: ${selectedUnit.name} deals ${formatDamageRange(
+                            hoveredCombatPreview.attackerMinDamage,
+                            hoveredCombatPreview.attackerMaxDamage,
+                          )}`,
+                          `Counter: ${hoveredCombatPreview.defenderCanCounter
+                            ? formatDamageRange(
+                                hoveredCombatPreview.defenderMinDamage,
+                                hoveredCombatPreview.defenderMaxDamage,
+                              )
+                            : "None"}`,
+                        ]
+                      : undefined,
+                  })
                 ) : hoveredTile ? (
-                  <>
+                  <div className="unit-summary unit-summary-empty">
                     <p>Empty Tile</p>
-                    <p>
-                      Position: {hoveredTile.x},{hoveredTile.y}
-                    </p>
-                    <p>Terrain: {runtime.map.tiles[hoveredTile.y][hoveredTile.x].terrain}</p>
-                    <p>
-                      Move Range: {moveHighlightTiles.some((tile) => tile.x === hoveredTile.x && tile.y === hoveredTile.y) ? "Yes" : "No"}
-                    </p>
-                    <p>
-                      Attack Reach: {attackHighlightTiles.some(
+                    <div className="unit-meta-list">
+                      <p>Tile: {hoveredTile.x},{hoveredTile.y}</p>
+                      <p>Status: Empty</p>
+                      <p>Terrain: {runtime.map.tiles[hoveredTile.y][hoveredTile.x].terrain}</p>
+                      <p>Move Range: {moveHighlightTiles.some((tile) => tile.x === hoveredTile.x && tile.y === hoveredTile.y) ? "Yes" : "No"}</p>
+                      <p>Attack Reach: {attackHighlightTiles.some(
                         (tile) => tile.x === hoveredTile.x && tile.y === hoveredTile.y,
                       )
                         ? "Yes"
-                        : "No"}
-                    </p>
-                  </>
+                        : "No"}</p>
+                    </div>
+                  </div>
                 ) : (
                   <p>Move the mouse over the board to inspect a tile or unit.</p>
                 )}
               </section>
 
-              <section className="card compact-card">
+              <section className={`card compact-card unit-card ${getUnitCardClassName(selectedUnit?.team)}`}>
                 <h2>Selected</h2>
                 {selectedUnit ? (
-                  <>
-                    <p>{selectedUnit.name}</p>
-                    <p>
-                      HP: {selectedUnit.currentHp}/{selectedUnit.stats.maxHp}
-                    </p>
-                    <p>STR: {selectedUnit.stats.strength}</p>
-                    <p>SKL: {selectedUnit.stats.skill}</p>
-                    <p>MAG: {selectedUnit.stats.magic}</p>
-                    <p>INT: {selectedUnit.stats.intelligence}</p>
-                    <p>DEF: {selectedUnit.stats.defense}</p>
-                    <p>RES: {selectedUnit.stats.resistance}</p>
-                    <p>SPD: {selectedUnit.stats.speed}</p>
-                    <p>MOV: {getUnitMovement(runtime, selectedUnit)}</p>
-                    <p>{selectedUnit.hasMoved ? "Moved this turn" : "Ready to move"}</p>
-                    <p>{selectedUnit.hasActed ? "Action spent" : "Action available"}</p>
-                    <p>
-                      {stagedDestination && isPreviewMoveReady
+                  renderUnitSummary(runtime, selectedUnit, {
+                    footer: [
+                      selectedUnit.hasMoved ? "Moved this turn" : "Ready to move",
+                      selectedUnit.hasActed ? "Action spent" : "Action available",
+                      stagedDestination && isPreviewMoveReady
                         ? `Staged at ${stagedDestination.x},${stagedDestination.y}`
-                        : "Click a reachable tile to stage a move."}
-                    </p>
-                  </>
+                        : "Click a reachable tile to stage a move.",
+                    ],
+                  })
                 ) : (
                   <p>No unit selected.</p>
                 )}
@@ -485,9 +508,19 @@ export function BattleScreen() {
                   <p>
                     {selectedUnit.name} vs {previewTarget.name}
                   </p>
-                  <p>Damage dealt: {combatPreview.attackerDamage}</p>
                   <p>
-                    Counter: {combatPreview.defenderCanCounter ? `${combatPreview.defenderDamage} damage` : "None"}
+                    Damage dealt: {formatDamageRange(
+                      combatPreview.attackerMinDamage,
+                      combatPreview.attackerMaxDamage,
+                    )}
+                  </p>
+                  <p>
+                    Counter: {combatPreview.defenderCanCounter
+                      ? formatDamageRange(
+                          combatPreview.defenderMinDamage,
+                          combatPreview.defenderMaxDamage,
+                        )
+                      : "None"}
                   </p>
                   <button
                     type="button"
@@ -523,6 +556,15 @@ export function BattleScreen() {
       return;
     }
 
+    if (clickedUnit?.team === "enemy") {
+      setSelectedEnemyThreatIds((current) =>
+        current.includes(clickedUnit.id)
+          ? current.filter((unitId) => unitId !== clickedUnit.id)
+          : [...current, clickedUnit.id],
+      );
+      return;
+    }
+
     if (stagedDestination) {
       clearStagedAction();
       return;
@@ -549,7 +591,7 @@ export function BattleScreen() {
     );
 
     if (isReachable) {
-      const previewPath = getMovementPathPreview(runtime, selectedUnit.id, position);
+      const previewPath = getPreviewMovePath(runtime, selectedUnit.id, position, hoveredMovePath);
       setStagedDestination(position);
       setPendingAction("chooseAction");
       setIsPreviewMoveReady(previewPath.length <= 1);
@@ -724,6 +766,33 @@ function getUnitAtPosition(units: UnitState[], position: Position): UnitState | 
   );
 }
 
+function getActionMenuStyle(position: Position, width: number, height: number) {
+  const xRatio = (position.x + 0.5) / width;
+  const yRatio = (position.y + 0.5) / height;
+  const leftPercent = clamp(xRatio * 100, 12, 88);
+  const topPercent = clamp(yRatio * 100, 16, 84);
+
+  let translateX = "-50%";
+  if (xRatio <= 0.2) {
+    translateX = "0%";
+  } else if (xRatio >= 0.8) {
+    translateX = "-100%";
+  }
+
+  let translateY = "-112%";
+  if (yRatio <= 0.28) {
+    translateY = "12%";
+  } else if (yRatio >= 0.82) {
+    translateY = "-100%";
+  }
+
+  return {
+    left: `${leftPercent}%`,
+    top: `${topPercent}%`,
+    transform: `translate(${translateX}, ${translateY})`,
+  };
+}
+
 function createPreviewState(
   runtime: RuntimeGameState,
   unitId: string,
@@ -750,13 +819,6 @@ function uniquePositions(positions: Position[]): Position[] {
   return Array.from(
     new Map(positions.map((position) => [`${position.x},${position.y}`, position])).values(),
   );
-}
-
-function getActionMenuStyle(position: Position, width: number, height: number) {
-  return {
-    left: `${((position.x + 0.5) / width) * 100}%`,
-    top: `${((position.y + 0.5) / height) * 100}%`,
-  };
 }
 
 function stripInitialMovePresentation(events: PresentationEvent[], unitId: string): PresentationEvent[] {
@@ -840,6 +902,37 @@ function isPathEfficientEnough(path: Position[], fallbackPath: Position[]): bool
   return path.length <= fallbackPath.length + 2;
 }
 
+function getPreviewMovePath(
+  runtime: RuntimeGameState,
+  unitId: string,
+  destination: Position,
+  hoveredMovePath: Position[],
+): Position[] {
+  const fallbackPath = getMovementPathPreview(runtime, unitId, destination);
+  const unit = runtime.units[unitId];
+
+  if (!unit || hoveredMovePath.length === 0) {
+    return fallbackPath;
+  }
+
+  const startsAtUnit =
+    hoveredMovePath[0].x === unit.position.x && hoveredMovePath[0].y === unit.position.y;
+  const endsAtDestination =
+    hoveredMovePath[hoveredMovePath.length - 1].x === destination.x &&
+    hoveredMovePath[hoveredMovePath.length - 1].y === destination.y;
+
+  if (
+    startsAtUnit &&
+    endsAtDestination &&
+    isPathContiguous(hoveredMovePath) &&
+    hoveredMovePath.length - 1 <= getUnitMovement(runtime, unit)
+  ) {
+    return hoveredMovePath;
+  }
+
+  return fallbackPath;
+}
+
 function arePositionsAdjacent(left: Position, right: Position): boolean {
   return Math.abs(left.x - right.x) + Math.abs(left.y - right.y) === 1;
 }
@@ -883,4 +976,161 @@ function getGrayLockUnitIds(
   }
 
   return Array.from(lockedIds);
+}
+
+function formatDamageRange(minDamage: number, maxDamage: number): string {
+  return `${minDamage}-${maxDamage}`;
+}
+
+function renderUnitSummary(
+  runtime: RuntimeGameState,
+  unit: UnitState,
+  options?: { footer?: string[] },
+) {
+  const classDefinition = runtime.map.classes.find((classData) => classData.id === unit.classId);
+  const inventory = unit.inventory
+    .map((weaponId) => runtime.map.weapons.find((weapon) => weapon.id === weaponId))
+    .filter((weapon): weapon is (typeof runtime.map.weapons)[number] => Boolean(weapon));
+  const proficiencyEntries = Object.entries(unit.weaponProficiencies)
+    .filter((entry) => Boolean(entry[1]))
+    .sort(([left], [right]) => formatWeaponDiscipline(left).localeCompare(formatWeaponDiscipline(right)));
+
+  return (
+    <div className="unit-summary">
+      <div className="unit-summary-header">
+        <div>
+          <p className="unit-summary-name">{unit.name}</p>
+          <p className="unit-summary-class">{classDefinition?.name ?? unit.classId}</p>
+        </div>
+        <p className="unit-summary-hp">
+          HP {unit.currentHp}/{unit.stats.maxHp}
+        </p>
+      </div>
+
+      <div className="unit-meta-list">
+        <p>Tile: {unit.position.x},{unit.position.y}</p>
+        <p>Status: {formatTeamStatus(unit.team)}</p>
+      </div>
+
+      <div className="unit-stat-grid" aria-label={`${unit.name} stats`}>
+        <p>STR {unit.stats.strength}</p>
+        <p>SKL {unit.stats.skill}</p>
+        <p>SPD {unit.stats.speed}</p>
+        <p>DEF {unit.stats.defense}</p>
+        <p>RES {unit.stats.resistance}</p>
+        <p>LCK {unit.stats.luck}</p>
+        <p>MOV {getUnitMovement(runtime, unit)}</p>
+      </div>
+
+      <div className="unit-detail-block">
+        <p className="unit-detail-label">Proficiencies</p>
+        <p className="unit-detail-value">
+          {proficiencyEntries.length > 0
+            ? proficiencyEntries.map(([discipline, rank]) => `${formatWeaponDiscipline(discipline)} ${rank}`).join(" | ")
+            : "None"}
+        </p>
+      </div>
+
+      <div className="unit-detail-block">
+        <p className="unit-detail-label">Items</p>
+        <p className="unit-detail-value">
+          {inventory.length > 0
+            ? inventory
+                .map((weapon) => `${weapon.id === unit.equippedWeaponId ? "*" : ""}${weapon.name}`)
+                .join(" | ")
+            : "None"}
+        </p>
+      </div>
+
+      {options?.footer && options.footer.length > 0 ? (
+        <div className="unit-footer-list">
+          {options.footer.map((line) => (
+            <p key={line}>{line}</p>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function formatTeamStatus(team: UnitState["team"]) {
+  if (team === "enemy") {
+    return "Enemy";
+  }
+  if (team === "ally") {
+    return "Ally";
+  }
+  return "Player";
+}
+
+function getUnitCardClassName(team?: UnitState["team"]) {
+  if (team === "enemy") {
+    return "unit-card-enemy";
+  }
+  if (team === "ally") {
+    return "unit-card-ally";
+  }
+  if (team === "player") {
+    return "unit-card-player";
+  }
+  return "unit-card-neutral";
+}
+
+function formatWeaponDiscipline(discipline: string) {
+  switch (discipline) {
+    case "elemental_magic":
+      return "Elem";
+    case "light_magic":
+      return "Light";
+    case "dark_magic":
+      return "Dark";
+    case "healing":
+      return "Heal";
+    case "sword":
+      return "Sword";
+    case "axe":
+      return "Axe";
+    case "lance":
+      return "Lance";
+    case "bow":
+      return "Bow";
+    default:
+      return discipline;
+  }
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function getDirectAttackRangePositions(state: RuntimeGameState, unitId: string): Position[] {
+  const unit = state.units[unitId];
+  const weapon = unit ? getEquippedWeapon(state, unit) : undefined;
+  if (!unit || !weapon || unit.isDefeated) {
+    return [];
+  }
+
+  const positions: Position[] = [];
+  for (let dx = -weapon.maxRange; dx <= weapon.maxRange; dx += 1) {
+    for (let dy = -weapon.maxRange; dy <= weapon.maxRange; dy += 1) {
+      const distance = Math.abs(dx) + Math.abs(dy);
+      if (distance < weapon.minRange || distance > weapon.maxRange) {
+        continue;
+      }
+
+      const position = { x: unit.position.x + dx, y: unit.position.y + dy };
+      if (
+        position.x < 0 ||
+        position.y < 0 ||
+        position.x >= state.map.width ||
+        position.y >= state.map.height
+      ) {
+        continue;
+      }
+
+      positions.push(position);
+    }
+  }
+
+  return positions;
 }
