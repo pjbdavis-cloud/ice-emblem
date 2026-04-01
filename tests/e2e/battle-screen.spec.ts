@@ -10,12 +10,21 @@ test.beforeEach(async ({ page }) => {
   await expect(phaseBanner).toBeHidden({ timeout: 3000 });
 });
 
-test("selects and deselects a unit by clicking its tile", async ({ page }) => {
+test("opens the action menu when clicking a selected unit again", async ({ page }) => {
   await clickTile(page, 1, 4);
   await expectSelectedPanelToContain(page, "Aster");
   await expect(page.getByText("Ready to move")).toBeVisible();
 
   await clickTile(page, 1, 4);
+  await expect(page.getByText("Aster at 1,4")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Wait" })).toBeVisible();
+});
+
+test("right click clears the current unit selection", async ({ page }) => {
+  await clickTile(page, 1, 4);
+  await expectSelectedPanelToContain(page, "Aster");
+
+  await rightClickTile(page, 1, 4);
   await expect(page.getByText("No unit selected.")).toBeVisible();
 });
 
@@ -43,7 +52,9 @@ test("attack target mode still allows hovering enemies in range", async ({ page 
 
   await hoverTile(page, 3, 1);
   await expectSectionToContain(page, "Hover", "Bandit");
-  await expectSectionToContain(page, "Combat Preview", "Mira vs Bandit");
+  await expectSectionToContain(page, "Combat Preview", "Mira");
+  await expectSectionToContain(page, "Combat Preview", "Bandit");
+  await expectSectionToContain(page, "Combat Preview", "Damage");
 });
 
 test("hovering updates the hover panel separately from the selected panel", async ({ page }) => {
@@ -55,7 +66,7 @@ test("hovering updates the hover panel separately from the selected panel", asyn
   await expectSectionToContain(page, "Selected", "Aster");
 });
 
-test("enemy threat selection uses left click to add and right click to clear", async ({ page }) => {
+test("enemy threat selection toggles with either left or right click", async ({ page }) => {
   const clearThreatButton = page.getByRole("button", { name: "Select None Threat" });
 
   await expect(clearThreatButton).toBeDisabled();
@@ -63,6 +74,12 @@ test("enemy threat selection uses left click to add and right click to clear", a
   await expect(clearThreatButton).toBeEnabled();
 
   await rightClickTile(page, 5, 1);
+  await expect(clearThreatButton).toBeDisabled();
+
+  await rightClickTile(page, 5, 1);
+  await expect(clearThreatButton).toBeEnabled();
+
+  await clickTile(page, 5, 1);
   await expect(clearThreatButton).toBeDisabled();
 });
 

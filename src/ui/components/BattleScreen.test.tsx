@@ -1,7 +1,7 @@
 import { act, useEffect } from "react";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createInitialRuntimeState } from "../../game/core/state";
@@ -53,6 +53,9 @@ vi.mock("./BattleCanvas", () => ({
         </button>
         <button type="button" onClick={() => props.onTileRightClick({ x: 5, y: 1 })}>
           Right Click Bandit
+        </button>
+        <button type="button" onClick={() => props.onTileRightClick({ x: 1, y: 4 })}>
+          Right Click Aster
         </button>
         <button type="button" onMouseEnter={() => props.onTileHover({ x: 5, y: 1 })}>
           Hover Bandit
@@ -115,7 +118,7 @@ describe("BattleScreen interactions", () => {
     vi.useRealTimers();
   });
 
-  it("selects and deselects a unit when clicked twice", async () => {
+  it("opens the action menu when clicking the selected unit again", async () => {
     const user = renderBattleScreen();
 
     await user.click(screen.getByRole("button", { name: "Click Aster" }));
@@ -123,6 +126,17 @@ describe("BattleScreen interactions", () => {
     expect(screen.getByText("Ready to move")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Click Aster" }));
+    expect(screen.getByText("Aster at 1,4")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Wait" })).toBeEnabled();
+  });
+
+  it("unselects a unit on right click", async () => {
+    const user = renderBattleScreen();
+
+    await user.click(screen.getByRole("button", { name: "Click Aster" }));
+    expect(screen.getByText("Aster")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Right Click Aster" }));
     expect(screen.getByText("No unit selected.")).toBeInTheDocument();
   });
 
@@ -181,7 +195,7 @@ describe("BattleScreen interactions", () => {
     await user.hover(screen.getByRole("button", { name: "Hover Bandit" }));
 
     expect(screen.getByText("Select a target to attack.")).toBeInTheDocument();
-    expect(screen.getByText("Bandit")).toBeInTheDocument();
+    expect(screen.getAllByText("Bandit").length).toBeGreaterThan(0);
     expect(screen.getByText(/Combat: Mira deals/)).toBeInTheDocument();
     expect(screen.getByTestId("targetable-enemy-tiles")).toHaveTextContent("5,1");
     expect(screen.getByTestId("hovered-attack-target-tile")).toHaveTextContent("5,1");
@@ -210,7 +224,7 @@ describe("BattleScreen interactions", () => {
     expect(screen.getByTestId("targetable-enemy-tiles")).toHaveTextContent("5,1");
   });
 
-  it("adds an enemy threat selection with left click and clears it with right click", async () => {
+  it("toggles an enemy threat selection with either left or right click", async () => {
     const user = renderBattleScreen();
 
     await user.click(screen.getByRole("button", { name: "Click Bandit" }));
@@ -218,6 +232,12 @@ describe("BattleScreen interactions", () => {
     expect(screen.getByTestId("enemy-threat-outline-tiles").textContent).not.toEqual("");
 
     await user.click(screen.getByRole("button", { name: "Right Click Bandit" }));
+    expect(screen.getByTestId("selected-enemy-threat-tiles")).toHaveTextContent("");
+
+    await user.click(screen.getByRole("button", { name: "Right Click Bandit" }));
+    expect(screen.getByTestId("selected-enemy-threat-tiles")).toHaveTextContent("5,1");
+
+    await user.click(screen.getByRole("button", { name: "Click Bandit" }));
     expect(screen.getByTestId("selected-enemy-threat-tiles")).toHaveTextContent("");
   });
 
@@ -239,9 +259,57 @@ describe("BattleScreen interactions", () => {
 
     expect(screen.getByRole("heading", { name: "Hover" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Selected" })).toBeInTheDocument();
-    expect(screen.getByText("Bandit")).toBeInTheDocument();
+    expect(screen.getAllByText("Bandit").length).toBeGreaterThan(0);
     expect(screen.getByText("Status: Enemy")).toBeInTheDocument();
+    expect(screen.getByText(/Combat: Aster deals/)).toBeInTheDocument();
     expect(screen.getByText("Ready to move")).toBeInTheDocument();
+  });
+
+  it("clears the combat preview when hover leaves an enemy", async () => {
+    const user = renderBattleScreen();
+    const combatPreviewCard = screen.getByRole("heading", { name: "Combat Preview" }).closest("section");
+    expect(combatPreviewCard).not.toBeNull();
+    const combatPreview = within(combatPreviewCard as HTMLElement);
+
+    await user.click(screen.getByRole("button", { name: "Click Aster" }));
+    await user.hover(screen.getByRole("button", { name: "Hover Bandit" }));
+
+    expect(combatPreview.getAllByText("Aster").length).toBeGreaterThan(0);
+    expect(combatPreview.getAllByText("Bandit").length).toBeGreaterThan(0);
+    expect(combatPreview.getByText("Character")).toBeInTheDocument();
+    expect(combatPreview.getByText("Hit Points")).toBeInTheDocument();
+    expect(combatPreview.getByText("Damage")).toBeInTheDocument();
+    expect(combatPreview.getByText("Weapon")).toBeInTheDocument();
+
+    await user.hover(screen.getByRole("button", { name: "Clear Hover" }));
+
+    expect(combatPreview.queryByText("DMG")).not.toBeInTheDocument();
+    expect(combatPreview.getByText("Select a unit, stage a move, then hover an enemy to preview that fight.")).toBeInTheDocument();
+  });
+
+  it("shows both units, hp, damage, and ko status in the combat preview", async () => {
+    const user = renderBattleScreen();
+    const combatPreviewCard = screen.getByRole("heading", { name: "Combat Preview" }).closest("section");
+    expect(combatPreviewCard).not.toBeNull();
+    const combatPreview = within(combatPreviewCard as HTMLElement);
+
+    await user.click(screen.getByRole("button", { name: "Click Aster" }));
+    await user.hover(screen.getByRole("button", { name: "Hover Bandit" }));
+
+    expect(combatPreview.getAllByText("Aster").length).toBeGreaterThan(0);
+    expect(combatPreview.getAllByText("Bandit").length).toBeGreaterThan(0);
+    expect(combatPreview.getByText("Character")).toBeInTheDocument();
+    expect(combatPreview.getByText("Hit Points")).toBeInTheDocument();
+    expect(combatPreview.getByText("Damage")).toBeInTheDocument();
+    expect(combatPreview.getByText("Weapon")).toBeInTheDocument();
+    expect(combatPreview.getByText("21/21")).toBeInTheDocument();
+    expect(combatPreview.getByText("23/23")).toBeInTheDocument();
+    expect(combatPreview.getByText("9 — 12")).toBeInTheDocument();
+    expect(combatPreview.getByText("8 — 11")).toBeInTheDocument();
+    expect(combatPreview.getByText("Iron Sword")).toBeInTheDocument();
+    expect(combatPreview.getByText("Iron Axe")).toBeInTheDocument();
+    expect(combatPreview.getByText("↑")).toBeInTheDocument();
+    expect(combatPreview.getByText("↓")).toBeInTheDocument();
   });
 
   it("shows compact selected unit details including class, proficiencies, and items", async () => {
@@ -251,7 +319,8 @@ describe("BattleScreen interactions", () => {
 
     expect(screen.getByText("Journeyman")).toBeInTheDocument();
     expect(screen.getByText("Sword E")).toBeInTheDocument();
-    expect(screen.getByText("*Iron Sword")).toBeInTheDocument();
+    expect(screen.getByText("Iron Sword")).toBeInTheDocument();
+    expect(screen.getByText("Equipped")).toBeInTheDocument();
   });
 
   it("shows hover unit class, proficiencies, and items", async () => {
@@ -261,7 +330,42 @@ describe("BattleScreen interactions", () => {
 
     expect(screen.getByText("Sailor")).toBeInTheDocument();
     expect(screen.getByText("Axe E")).toBeInTheDocument();
-    expect(screen.getByText("*Iron Axe")).toBeInTheDocument();
+    expect(screen.getByText("Iron Axe")).toBeInTheDocument();
+    expect(screen.getByText("Equipped")).toBeInTheDocument();
+  });
+
+  it("does not show movement or attack previews for a friendly unit that has already acted", async () => {
+    const user = renderBattleScreen((runtime) => {
+      runtime.units["player-archer"].hasMoved = true;
+      runtime.units["player-archer"].hasActed = true;
+      return runtime;
+    });
+
+    await user.hover(screen.getByRole("button", { name: "Hover Ally Tile" }));
+
+    expect(screen.getByTestId("move-highlight-tiles")).toHaveTextContent("");
+    expect(screen.getByTestId("attack-highlight-tiles")).toHaveTextContent("");
+  });
+
+  it("still allows selecting a spent friendly unit for inspection and combat preview", async () => {
+    const user = renderBattleScreen((runtime) => {
+      runtime.units["player-lord"].hasMoved = true;
+      runtime.units["player-lord"].hasActed = true;
+      return runtime;
+    });
+
+    await user.click(screen.getByRole("button", { name: "Click Aster" }));
+    expect(screen.getByText("Aster")).toBeInTheDocument();
+    expect(screen.getByText("Moved this turn")).toBeInTheDocument();
+    expect(screen.getByText("Action spent")).toBeInTheDocument();
+
+    await user.hover(screen.getByRole("button", { name: "Hover Bandit" }));
+    const combatPreviewCard = screen.getByRole("heading", { name: "Combat Preview" }).closest("section");
+    expect(combatPreviewCard).not.toBeNull();
+    const combatPreview = within(combatPreviewCard as HTMLElement);
+
+    expect(combatPreview.getAllByText("Aster").length).toBeGreaterThan(0);
+    expect(combatPreview.getAllByText("Bandit").length).toBeGreaterThan(0);
   });
 
   it("hides the presentation log sidebar during normal play", () => {
@@ -324,8 +428,15 @@ describe("BattleScreen interactions", () => {
   });
 });
 
-function renderBattleScreen() {
+function renderBattleScreen(
+  mutateRuntime?: (
+    runtime: ReturnType<typeof createInitialRuntimeState>,
+  ) => ReturnType<typeof createInitialRuntimeState>,
+) {
   vi.useFakeTimers();
+
+  const runtime = createInitialRuntimeState(demoMap);
+  const preparedRuntime = mutateRuntime ? mutateRuntime(runtime) : runtime;
 
   const store = configureStore({
     reducer: {
@@ -333,7 +444,7 @@ function renderBattleScreen() {
     },
     preloadedState: {
       game: {
-        runtime: createInitialRuntimeState(demoMap),
+        runtime: preparedRuntime,
       },
     },
   });

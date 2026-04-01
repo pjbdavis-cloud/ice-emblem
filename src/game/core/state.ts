@@ -52,7 +52,7 @@ export function applyAction(state: RuntimeGameState, action: GameAction): Runtim
     case "selectUnit":
       if (action.unitId) {
         const unit = state.units[action.unitId];
-        if (!unit || unit.team !== state.phase || unit.hasActed || unit.isDefeated) {
+        if (!unit || unit.team === "enemy" || unit.isDefeated) {
           return {
             ...state,
             selectedUnitId: undefined,

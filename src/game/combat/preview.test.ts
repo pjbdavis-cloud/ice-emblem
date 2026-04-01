@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getCombatPreview } from "./preview";
+import { getCombatPreview, getProjectedCombatPreview } from "./preview";
 import { createInitialRuntimeState } from "../core/state";
 import type { BattleMapDefinition, UnitDefinition } from "../types";
 
@@ -135,8 +135,9 @@ describe("combat preview", () => {
 
     expect(preview.attackerMinDamage).toBeGreaterThanOrEqual(4);
     expect(preview.defenderCanCounter).toBe(false);
-    expect(preview.defenderMinDamage).toBe(0);
-    expect(preview.defenderMaxDamage).toBe(0);
+    expect(preview.defenderPotentialCounter).toBe(true);
+    expect(preview.defenderMinDamage).toBeGreaterThan(0);
+    expect(preview.defenderMaxDamage).toBeGreaterThanOrEqual(preview.defenderMinDamage);
   });
 
   it("applies injury penalties using the configured threshold", () => {
@@ -225,5 +226,69 @@ describe("combat preview", () => {
     expect(preview.attackerMaxDamage).toBe(14);
     expect(preview.defenderMinDamage).toBe(0);
     expect(preview.defenderMaxDamage).toBe(3);
+  });
+
+  it("can project a combat preview for distant units using the attacker's equipped range", () => {
+    const runtime = createInitialRuntimeState(
+      createTestMap([
+        createUnit({
+          id: "archer",
+          team: "player",
+          classId: "archer",
+          position: { x: 1, y: 1 },
+          stats: { maxHp: 18, strength: 7, skill: 7, luck: 3, defense: 3, resistance: 2, speed: 5 },
+          equippedWeaponId: "iron-bow",
+          inventory: ["iron-bow"],
+          weaponProficiencies: { bow: "E" },
+        }),
+        createUnit({
+          id: "fighter",
+          team: "enemy",
+          position: { x: 5, y: 5 },
+          stats: { maxHp: 20, strength: 7, skill: 7, luck: 3, defense: 4, resistance: 2, speed: 4 },
+          equippedWeaponId: "iron-sword",
+        }),
+      ]),
+    );
+
+    const actualPreview = getCombatPreview(runtime, "archer", "fighter");
+    const projectedPreview = getProjectedCombatPreview(runtime, "archer", "fighter");
+
+    expect(actualPreview.attackerMaxDamage).toBe(0);
+    expect(projectedPreview.attackerMaxDamage).toBeGreaterThan(0);
+    expect(projectedPreview.defenderCanCounter).toBe(false);
+  });
+
+  it("uses overlapping weapon ranges when projecting retaliation", () => {
+    const runtime = createInitialRuntimeState(
+      createTestMap([
+        createUnit({
+          id: "archer-a",
+          team: "player",
+          classId: "archer",
+          position: { x: 1, y: 1 },
+          stats: { maxHp: 18, strength: 7, skill: 7, luck: 3, defense: 3, resistance: 2, speed: 5 },
+          equippedWeaponId: "iron-bow",
+          inventory: ["iron-bow"],
+          weaponProficiencies: { bow: "E" },
+        }),
+        createUnit({
+          id: "archer-b",
+          team: "enemy",
+          classId: "archer",
+          position: { x: 5, y: 5 },
+          stats: { maxHp: 18, strength: 7, skill: 7, luck: 3, defense: 3, resistance: 2, speed: 5 },
+          equippedWeaponId: "iron-bow",
+          inventory: ["iron-bow"],
+          weaponProficiencies: { bow: "E" },
+        }),
+      ]),
+    );
+
+    const projectedPreview = getProjectedCombatPreview(runtime, "archer-a", "archer-b");
+
+    expect(projectedPreview.attackerMaxDamage).toBeGreaterThan(0);
+    expect(projectedPreview.defenderCanCounter).toBe(true);
+    expect(projectedPreview.defenderMaxDamage).toBeGreaterThan(0);
   });
 });

@@ -21,6 +21,7 @@ export function getCombatPreview(
       defenderMinDamage: 0,
       defenderMaxDamage: 0,
       defenderCanCounter: false,
+      defenderPotentialCounter: false,
     };
   }
 
@@ -28,16 +29,63 @@ export function getCombatPreview(
   const defenderWeapon = getEquippedWeapon(state, defender);
   const distance = getManhattanDistance(attacker.position, defender.position);
 
+  return getCombatPreviewAtDistance(state, attacker, defender, attackerWeapon, defenderWeapon, distance);
+}
+
+export function getProjectedCombatPreview(
+  state: RuntimeGameState,
+  attackerId: string,
+  defenderId: string,
+): CombatPreview {
+  const attacker = state.units[attackerId];
+  const defender = state.units[defenderId];
+
+  if (!attacker || !defender) {
+    return {
+      attackerMinDamage: 0,
+      attackerMaxDamage: 0,
+      defenderMinDamage: 0,
+      defenderMaxDamage: 0,
+      defenderCanCounter: false,
+      defenderPotentialCounter: false,
+    };
+  }
+
+  const attackerWeapon = getEquippedWeapon(state, attacker);
+  const defenderWeapon = getEquippedWeapon(state, defender);
+  const projectedDistance = getProjectedDistance(attackerWeapon, defenderWeapon);
+
+  return getCombatPreviewAtDistance(
+    state,
+    attacker,
+    defender,
+    attackerWeapon,
+    defenderWeapon,
+    projectedDistance,
+  );
+}
+
+function getCombatPreviewAtDistance(
+  state: RuntimeGameState,
+  attacker: UnitState,
+  defender: UnitState,
+  attackerWeapon: WeaponDefinition | undefined,
+  defenderWeapon: WeaponDefinition | undefined,
+  distance: number,
+): CombatPreview {
+
   const attackerCanHit = attackerWeapon ? isInRange(attackerWeapon, distance) : false;
   const attackerRange =
     attackerCanHit && attackerWeapon
       ? calculateDamageRange(state, attacker, defender, attackerWeapon)
       : { min: 0, max: 0 };
+  const defenderPotentialCounter =
+    attackerCanHit && defenderWeapon ? isInRange(defenderWeapon, distance) : false;
   const defenderSurvives = defender.currentHp - attackerRange.max > 0;
   const defenderCanCounter =
-    defenderSurvives && defenderWeapon ? isInRange(defenderWeapon, distance) : false;
+    defenderSurvives && defenderPotentialCounter;
   const defenderRange =
-    defenderCanCounter && defenderWeapon
+    defenderPotentialCounter && defenderWeapon
       ? calculateDamageRange(state, defender, attacker, defenderWeapon)
       : { min: 0, max: 0 };
 
@@ -47,6 +95,7 @@ export function getCombatPreview(
     defenderMinDamage: defenderRange.min,
     defenderMaxDamage: defenderRange.max,
     defenderCanCounter,
+    defenderPotentialCounter,
   };
 }
 
@@ -111,6 +160,28 @@ export function rollDamageRange(range: DamageRange, randomValue = Math.random())
 
 function isInRange(weapon: WeaponDefinition, distance: number): boolean {
   return distance >= weapon.minRange && distance <= weapon.maxRange;
+}
+
+function getProjectedDistance(
+  attackerWeapon: WeaponDefinition | undefined,
+  defenderWeapon: WeaponDefinition | undefined,
+): number {
+  if (!attackerWeapon) {
+    return 1;
+  }
+
+  if (!defenderWeapon) {
+    return attackerWeapon.minRange;
+  }
+
+  const overlapStart = Math.max(attackerWeapon.minRange, defenderWeapon.minRange);
+  const overlapEnd = Math.min(attackerWeapon.maxRange, defenderWeapon.maxRange);
+
+  if (overlapStart <= overlapEnd) {
+    return overlapStart;
+  }
+
+  return attackerWeapon.minRange;
 }
 
 function getTriangleBonus(

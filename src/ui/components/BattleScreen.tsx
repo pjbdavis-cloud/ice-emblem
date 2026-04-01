@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppDispatch, useAppSelector } from "../../app/hooks";
 import { dispatchGameAction, replaceRuntimeState, resetDemoState, undoAction } from "../../app/slices/gameSlice";
-import { getCombatPreview, getEquippedWeapon } from "../../game/combat/preview";
+import { getEquippedWeapon, getProjectedCombatPreview } from "../../game/combat/preview";
 import {
   buildPlayerActionPresentation,
   canUndo,
@@ -76,6 +76,10 @@ export function BattleScreen() {
       .map((unit) => unit.id);
   }, [pendingRuntimeState]);
   const hoveredUnit = hoveredTile ? getUnitAtPosition(units, hoveredTile) : undefined;
+  const canShowHoveredActionPreview = Boolean(
+    hoveredUnit &&
+      (hoveredUnit.team === "enemy" || (!hoveredUnit.hasMoved && !hoveredUnit.hasActed)),
+  );
 
   const movePreviewState = useMemo(() => {
     if (!selectedUnit || !stagedDestination) {
@@ -86,20 +90,32 @@ export function BattleScreen() {
   }, [runtime, selectedUnit, stagedDestination]);
 
   const reachableTiles = useMemo(
-    () => (selectedUnit && !stagedDestination ? getReachablePositions(runtime, selectedUnit.id) : []),
+    () =>
+      selectedUnit && !stagedDestination && canUnitTakePlayerActions(selectedUnit, runtime)
+        ? getReachablePositions(runtime, selectedUnit.id)
+        : [],
     [runtime, selectedUnit, stagedDestination],
   );
   const selectedMovePreviewTiles = useMemo(
-    () => (selectedUnit && !stagedDestination ? getMovementPreviewPositions(runtime, selectedUnit.id) : []),
+    () =>
+      selectedUnit && !stagedDestination && canUnitTakePlayerActions(selectedUnit, runtime)
+        ? getMovementPreviewPositions(runtime, selectedUnit.id)
+        : [],
     [runtime, selectedUnit, stagedDestination],
   );
   const hoveredMovePreviewTiles = useMemo(
-    () => (hoveredUnit ? getMovementPreviewPositions(runtime, hoveredUnit.id) : []),
-    [hoveredUnit, runtime],
+    () =>
+      hoveredUnit && canShowHoveredActionPreview
+        ? getMovementPreviewPositions(runtime, hoveredUnit.id)
+        : [],
+    [canShowHoveredActionPreview, hoveredUnit, runtime],
   );
   const hoveredAttackPreviewTiles = useMemo(
-    () => (hoveredUnit ? getAttackReachPreviewPositions(runtime, hoveredUnit.id) : []),
-    [hoveredUnit, runtime],
+    () =>
+      hoveredUnit && canShowHoveredActionPreview
+        ? getAttackReachPreviewPositions(runtime, hoveredUnit.id)
+        : [],
+    [canShowHoveredActionPreview, hoveredUnit, runtime],
   );
   useEffect(() => {
     if (
@@ -144,26 +160,63 @@ export function BattleScreen() {
     return getUnitAttackOptions(sourceState, selectedUnit.id);
   }, [movePreviewState, runtime, selectedUnit, stagedDestination]);
 
-  const hoveredAttackTarget =
+  const hoveredEnemyUnit =
     hoveredUnit && selectedUnit && hoveredUnit.team !== selectedUnit.team
-      ? attackableTargets.find((unit) => unit.id === hoveredUnit.id)
+      ? hoveredUnit
       : undefined;
 
-  const previewTarget = hoveredAttackTarget ?? attackableTargets[0];
+  const hoveredAttackTarget =
+      hoveredUnit && selectedUnit && hoveredUnit.team !== selectedUnit.team
+        ? attackableTargets.find((unit) => unit.id === hoveredUnit.id)
+        : undefined;
+
+  const previewTarget = hoveredEnemyUnit;
   const previewState = stagedDestination ? movePreviewState : runtime;
   const combatPreview =
     selectedUnit && previewTarget
-      ? getCombatPreview(previewState, selectedUnit.id, previewTarget.id)
+      ? getProjectedCombatPreview(previewState, selectedUnit.id, previewTarget.id)
       : undefined;
+  const previewAttackerWeapon =
+    selectedUnit ? getEquippedWeapon(previewState, selectedUnit) : undefined;
+  const previewDefenderWeapon =
+    previewTarget ? getEquippedWeapon(previewState, previewTarget) : undefined;
+  const previewAttackerClass =
+    selectedUnit
+      ? runtime.map.classes.find((classData) => classData.id === selectedUnit.classId)
+      : undefined;
+  const previewDefenderClass =
+    previewTarget
+      ? runtime.map.classes.find((classData) => classData.id === previewTarget.classId)
+      : undefined;
+  const triangleRelation = getWeaponTriangleRelation(
+    previewAttackerWeapon?.category,
+    previewDefenderWeapon?.category,
+  );
   const hoveredCombatPreview =
-    selectedUnit && hoveredAttackTarget
-      ? getCombatPreview(previewState, selectedUnit.id, hoveredAttackTarget.id)
+    selectedUnit && hoveredEnemyUnit
+      ? getProjectedCombatPreview(previewState, selectedUnit.id, hoveredEnemyUnit.id)
       : undefined;
   const showingSelectedRanges = Boolean(selectedUnit);
+  const attackerKoOutcome =
+    combatPreview && previewTarget
+      ? getCombatKoOutcome(
+          combatPreview.attackerMinDamage,
+          combatPreview.attackerMaxDamage,
+          previewTarget.currentHp,
+        )
+      : undefined;
+  const counterKoOutcome =
+    combatPreview && selectedUnit && combatPreview.defenderPotentialCounter
+      ? getCombatKoOutcome(
+          combatPreview.defenderMinDamage,
+          combatPreview.defenderMaxDamage,
+          selectedUnit.currentHp,
+        )
+      : undefined;
   const moveHighlightTiles = showingSelectedRanges ? selectedMovePreviewTiles : hoveredMovePreviewTiles;
   const moveHighlightTeam = showingSelectedRanges ? selectedUnit?.team : hoveredUnit?.team;
   const selectedAttackPreviewTiles = useMemo(() => {
-    if (!selectedUnit) {
+    if (!selectedUnit || !canUnitTakePlayerActions(selectedUnit, runtime)) {
       return [];
     }
 
@@ -443,19 +496,19 @@ export function BattleScreen() {
                   <UnitSummaryCard
                     runtime={runtime}
                     unit={hoveredUnit}
-                    footer={
-                      selectedUnit && hoveredCombatPreview
-                        ? [
-                            `Combat: ${selectedUnit.name} deals ${formatDamageRange(
-                              hoveredCombatPreview.attackerMinDamage,
-                              hoveredCombatPreview.attackerMaxDamage,
-                            )}`,
-                            `Counter: ${hoveredCombatPreview.defenderCanCounter
-                              ? formatDamageRange(
-                                  hoveredCombatPreview.defenderMinDamage,
-                                  hoveredCombatPreview.defenderMaxDamage,
-                                )
-                              : "None"}`,
+                      footer={
+                        selectedUnit && hoveredCombatPreview
+                          ? [
+                              `Combat: ${selectedUnit.name} deals ${formatDamageRange(
+                                hoveredCombatPreview.attackerMinDamage,
+                                hoveredCombatPreview.attackerMaxDamage,
+                              )}`,
+                            `Counter: ${hoveredCombatPreview.defenderPotentialCounter
+                                ? formatDamageRange(
+                                    hoveredCombatPreview.defenderMinDamage,
+                                    hoveredCombatPreview.defenderMaxDamage,
+                                  )
+                                : "None"}`,
                           ]
                         : undefined
                     }
@@ -500,34 +553,90 @@ export function BattleScreen() {
               </section>
             </div>
 
-            <section className="card">
+            <section className="card combat-preview-card">
               <h2>Combat Preview</h2>
               {selectedUnit && previewTarget && combatPreview ? (
                 <>
-                  <p>
-                    {selectedUnit.name} vs {previewTarget.name}
-                  </p>
-                  <p>
-                    Damage dealt: {formatDamageRange(
-                      combatPreview.attackerMinDamage,
-                      combatPreview.attackerMaxDamage,
-                    )}
-                  </p>
-                  <p>
-                    Counter: {combatPreview.defenderCanCounter
-                      ? formatDamageRange(
-                          combatPreview.defenderMinDamage,
-                          combatPreview.defenderMaxDamage,
-                        )
-                      : "None"}
-                  </p>
-                  <button
-                    type="button"
-                    disabled={isPlayerBannerBlocking}
-                    onClick={() => handleAttack(previewTarget.id)}
-                  >
-                    Attack Target
-                  </button>
+                  <div className="combat-preview-layout">
+                    <div className="combat-preview-unit combat-preview-unit-left">
+                      <div className="combat-preview-header">
+                        <p className="combat-preview-name">{selectedUnit.name}</p>
+                        <p className="combat-preview-class">
+                          {previewAttackerClass?.name ?? selectedUnit.classId}
+                        </p>
+                      </div>
+                      <div className="combat-preview-stat">
+                        {renderCombatPreviewHpBar(
+                          selectedUnit.currentHp,
+                          selectedUnit.stats.maxHp,
+                          combatPreview.defenderPotentialCounter
+                            ? {
+                                minDamage: combatPreview.defenderMinDamage,
+                                maxDamage: combatPreview.defenderMaxDamage,
+                              }
+                            : undefined,
+                        )}
+                      </div>
+                      <p
+                        className={`combat-preview-stat combat-preview-damage ${
+                          attackerKoOutcome && attackerKoOutcome.tone !== "none"
+                            ? "combat-preview-damage-lethal"
+                            : ""
+                        }`}
+                      >
+                        {formatDamageRange(
+                          combatPreview.attackerMinDamage,
+                          combatPreview.attackerMaxDamage,
+                        )}
+                      </p>
+                      <div className="combat-preview-stat">
+                        <span>{previewAttackerWeapon?.name ?? "None"}</span>
+                        {renderTriangleIndicator(triangleRelation.attacker)}
+                      </div>
+                    </div>
+                    <div className="combat-preview-center">
+                      <span className="combat-preview-label">Character</span>
+                      <span className="combat-preview-label">Hit Points</span>
+                      <span className="combat-preview-label">Damage</span>
+                      <span className="combat-preview-label">Weapon</span>
+                    </div>
+                    <div className="combat-preview-unit combat-preview-unit-right">
+                      <div className="combat-preview-header">
+                        <p className="combat-preview-name">{previewTarget.name}</p>
+                        <p className="combat-preview-class">
+                          {previewDefenderClass?.name ?? previewTarget.classId}
+                        </p>
+                      </div>
+                      <div className="combat-preview-stat">
+                        {renderCombatPreviewHpBar(
+                          previewTarget.currentHp,
+                          previewTarget.stats.maxHp,
+                          {
+                            minDamage: combatPreview.attackerMinDamage,
+                            maxDamage: combatPreview.attackerMaxDamage,
+                          },
+                        )}
+                      </div>
+                      <p
+                        className={`combat-preview-stat combat-preview-damage ${
+                          counterKoOutcome && counterKoOutcome.tone !== "none"
+                            ? "combat-preview-damage-lethal"
+                            : ""
+                        }`}
+                      >
+                        {combatPreview.defenderPotentialCounter
+                          ? formatDamageRange(
+                              combatPreview.defenderMinDamage,
+                              combatPreview.defenderMaxDamage,
+                            )
+                          : "-"}
+                      </p>
+                      <div className="combat-preview-stat">
+                        <span>{previewDefenderWeapon?.name ?? "None"}</span>
+                        {renderTriangleIndicator(triangleRelation.defender)}
+                      </div>
+                    </div>
+                  </div>
                 </>
               ) : (
                 <p>Select a unit, stage a move, then hover an enemy to preview that fight.</p>
@@ -565,10 +674,15 @@ export function BattleScreen() {
       return;
     }
 
-    if (clickedUnit && clickedUnit.team === runtime.phase) {
+    if (clickedUnit && (clickedUnit.team === "player" || clickedUnit.team === "ally")) {
       if (selectedUnit?.id === clickedUnit.id) {
-        clearStagedAction();
-        clearSelection();
+        if (!canUnitTakePlayerActions(clickedUnit, runtime)) {
+          return;
+        }
+        setStagedDestination(clickedUnit.position);
+        setPendingAction("chooseAction");
+        setPreviewMove(undefined);
+        setIsPreviewMoveReady(true);
         return;
       }
 
@@ -974,8 +1088,121 @@ function getGrayLockUnitIds(
   return Array.from(lockedIds);
 }
 
+function canUnitTakePlayerActions(unit: UnitState, runtime: RuntimeGameState) {
+  return unit.team === runtime.phase && !unit.hasMoved && !unit.hasActed && !unit.isDefeated;
+}
+
 function formatDamageRange(minDamage: number, maxDamage: number): string {
-  return `${minDamage}-${maxDamage}`;
+  return `${minDamage} — ${maxDamage}`;
+}
+
+function getCombatKoOutcome(minDamage: number, maxDamage: number, targetHp: number) {
+  const outcome = getKoOutcome(minDamage, maxDamage, targetHp);
+
+  if (outcome.tone === "guaranteed") {
+    return { ...outcome, icon: "KO" };
+  }
+
+  if (outcome.tone === "possible") {
+    return { ...outcome, icon: "?KO" };
+  }
+
+  return outcome;
+}
+
+function getWeaponTriangleRelation(
+  attackerCategory?: string,
+  defenderCategory?: string,
+) {
+  if (!attackerCategory || !defenderCategory) {
+    return { attacker: "none", defender: "none" } as const;
+  }
+
+  const pair = `${attackerCategory}:${defenderCategory}`;
+  const physicalWinningPairs = new Set(["sword:axe", "axe:lance", "lance:sword"]);
+  const physicalLosingPairs = new Set(["axe:sword", "lance:axe", "sword:lance"]);
+  const magicWinningPairs = new Set(["light_magic:dark_magic", "dark_magic:light_magic"]);
+
+  if (physicalWinningPairs.has(pair) || magicWinningPairs.has(pair)) {
+    return { attacker: "advantage", defender: "disadvantage" } as const;
+  }
+
+  if (physicalLosingPairs.has(pair)) {
+    return { attacker: "disadvantage", defender: "advantage" } as const;
+  }
+
+  return { attacker: "even", defender: "even" } as const;
+}
+
+function renderTriangleIndicator(relation: "advantage" | "disadvantage" | "even" | "none") {
+  if (relation === "advantage") {
+    return <span className="triangle-indicator triangle-indicator-advantage">↑</span>;
+  }
+
+  if (relation === "disadvantage") {
+    return <span className="triangle-indicator triangle-indicator-disadvantage">↓</span>;
+  }
+
+  return null;
+}
+
+function renderCombatPreviewHpBar(
+  currentHp: number,
+  maxHp: number,
+  incomingDamage?: { minDamage: number; maxDamage: number },
+) {
+  const safeMaxHp = Math.max(1, maxHp);
+  const clampedCurrentHp = clamp(currentHp, 0, safeMaxHp);
+  const currentPercent = (clampedCurrentHp / safeMaxHp) * 100;
+  const minDamage = incomingDamage ? clamp(incomingDamage.minDamage, 0, clampedCurrentHp) : 0;
+  const maxDamage = incomingDamage ? clamp(incomingDamage.maxDamage, 0, clampedCurrentHp) : 0;
+  const guaranteedRemainingHp = Math.max(0, clampedCurrentHp - maxDamage);
+  const possibleRemainingHp = Math.max(guaranteedRemainingHp, clampedCurrentHp - minDamage);
+  const guaranteedRemainingPercent = (guaranteedRemainingHp / safeMaxHp) * 100;
+  const possibleRemainingPercent = (possibleRemainingHp / safeMaxHp) * 100;
+  const uncertainWidth = Math.max(0, possibleRemainingPercent - guaranteedRemainingPercent);
+  const guaranteedLostWidth = Math.max(0, currentPercent - possibleRemainingPercent);
+
+  return (
+    <div className="combat-preview-hpbar">
+      <div className="combat-preview-hpbar-track">
+        <div className="combat-preview-hpbar-fill" style={{ width: `${currentPercent}%` }} />
+        {uncertainWidth > 0 ? (
+          <div
+            className="combat-preview-hpbar-uncertain"
+            style={{
+              left: `${guaranteedRemainingPercent}%`,
+              width: `${uncertainWidth}%`,
+            }}
+          />
+        ) : null}
+        {guaranteedLostWidth > 0 ? (
+          <div
+            className="combat-preview-hpbar-guaranteed-loss"
+            style={{
+              left: `${possibleRemainingPercent}%`,
+              width: `${guaranteedLostWidth}%`,
+            }}
+          />
+        ) : null}
+        <span className="combat-preview-hpbar-label">
+          {clampedCurrentHp}/{safeMaxHp}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function getKoOutcome(minDamage: number, maxDamage: number, targetHp: number) {
+  if (minDamage >= targetHp) {
+    return { icon: "☠", label: "Guaranteed", tone: "guaranteed" as const };
+  }
+
+  if (maxDamage >= targetHp) {
+    return { icon: "!", label: "Possible", tone: "possible" as const };
+  }
+
+  return { icon: "-", label: "No", tone: "none" as const };
 }
 
 function useEnemyThreatSelection(runtime: RuntimeGameState, units: UnitState[]) {
@@ -1011,18 +1238,22 @@ function useEnemyThreatSelection(runtime: RuntimeGameState, units: UnitState[]) 
     [enemyUnits, selectedEnemyThreatIds],
   );
 
-  return {
-    clearThreatSelection: () => setSelectedEnemyThreatIds([]),
-    enemyThreatOutlineTiles,
-    handleEnemyThreatLeftClick: (unitId: string) =>
-      setSelectedEnemyThreatIds((current) => (current.includes(unitId) ? current : [...current, unitId])),
-    handleEnemyThreatRightClick: (unitId: string) =>
-      setSelectedEnemyThreatIds((current) => (current.includes(unitId) ? current.filter((id) => id !== unitId) : current)),
-    selectAllThreats: () => setSelectedEnemyThreatIds(enemyUnits.map((unit) => unit.id)),
-    selectedEnemyThreatIds,
-    selectedEnemyThreatTiles,
-  };
-}
+    return {
+      clearThreatSelection: () => setSelectedEnemyThreatIds([]),
+      enemyThreatOutlineTiles,
+      handleEnemyThreatLeftClick: (unitId: string) =>
+        setSelectedEnemyThreatIds((current) =>
+          current.includes(unitId) ? current.filter((id) => id !== unitId) : [...current, unitId],
+        ),
+      handleEnemyThreatRightClick: (unitId: string) =>
+        setSelectedEnemyThreatIds((current) =>
+          current.includes(unitId) ? current.filter((id) => id !== unitId) : [...current, unitId],
+        ),
+      selectAllThreats: () => setSelectedEnemyThreatIds(enemyUnits.map((unit) => unit.id)),
+      selectedEnemyThreatIds,
+      selectedEnemyThreatTiles,
+    };
+  }
 
 function UnitSummaryCard({
   footer,
@@ -1081,9 +1312,15 @@ function UnitSummaryCard({
         <p className="unit-detail-label">Items</p>
         <p className="unit-detail-value">
           {inventory.length > 0
-            ? inventory
-                .map((weapon) => `${weapon.id === unit.equippedWeaponId ? "*" : ""}${weapon.name}`)
-                .join(" | ")
+            ? inventory.flatMap((weapon, index) => [
+                <span key={weapon.id} className="unit-item-entry">
+                  <span>{weapon.name}</span>
+                  {weapon.id === unit.equippedWeaponId ? (
+                    <span className="inline-badge">Equipped</span>
+                  ) : null}
+                </span>,
+                index < inventory.length - 1 ? <span key={`${weapon.id}-sep`}> | </span> : null,
+              ])
             : "None"}
         </p>
       </div>

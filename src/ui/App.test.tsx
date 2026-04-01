@@ -31,7 +31,8 @@ describe("App routing", () => {
     expect(screen.getAllByText("Journeyman").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Proficiencies" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Items" })).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "*Iron Sword" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: "Iron Sword" }).length).toBeGreaterThan(0);
+    expect(screen.getByText("Equipped")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Journeyman" })).toBeInTheDocument();
   });
 });

@@ -661,7 +661,7 @@ function formatInventory(unit: UnitDefinition, weaponsById: Map<string, WeaponDe
     .map((itemId) => {
       const weapon = weaponsById.get(itemId);
       const label = weapon?.name ?? itemId;
-      return itemId === unit.equippedWeaponId ? `*${label}` : label;
+      return itemId === unit.equippedWeaponId ? `${label} (Equipped)` : label;
     })
     .join(", ");
 }
@@ -678,17 +678,18 @@ function renderInventoryLinks(
   return unit.inventory.flatMap((itemId, index) => {
     const weapon = weaponsById.get(itemId);
     const label = weapon?.name ?? itemId;
-    const displayLabel = itemId === unit.equippedWeaponId ? `*${label}` : label;
 
     return [
-      <button
-        key={itemId}
-        type="button"
-        className="wiki-inline-link"
-        onClick={() => navigate(`/game-info/weapons/${itemId}`)}
-      >
-        {displayLabel}
-      </button>,
+      <span key={itemId} className="wiki-item-entry">
+        <button
+          type="button"
+          className="wiki-inline-link"
+          onClick={() => navigate(`/game-info/weapons/${itemId}`)}
+        >
+          {label}
+        </button>
+        {itemId === unit.equippedWeaponId ? <span className="inline-badge">Equipped</span> : null}
+      </span>,
       index < unit.inventory.length - 1 ? <span key={`${itemId}-separator`}>, </span> : null,
     ];
   });

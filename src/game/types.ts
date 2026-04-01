@@ -139,6 +139,7 @@ export type CombatPreview = {
   defenderMinDamage: number;
   defenderMaxDamage: number;
   defenderCanCounter: boolean;
+  defenderPotentialCounter: boolean;
 };
 
 export type PresentationEvent =
