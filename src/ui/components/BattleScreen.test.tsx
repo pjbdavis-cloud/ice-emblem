@@ -12,6 +12,7 @@ import { BattleScreen } from "./BattleScreen";
 vi.mock("./BattleCanvas", () => ({
   BattleCanvas: (props: {
     onTileClick: (position: { x: number; y: number }) => void;
+    onTileRightClick: (position?: { x: number; y: number }) => void;
     onTileHover: (position?: { x: number; y: number }) => void;
     moveHighlightTiles: Array<{ x: number; y: number }>;
     attackHighlightTiles: Array<{ x: number; y: number }>;
@@ -50,8 +51,23 @@ vi.mock("./BattleCanvas", () => ({
         <button type="button" onClick={() => props.onTileClick({ x: 5, y: 1 })}>
           Click Bandit
         </button>
+        <button type="button" onClick={() => props.onTileRightClick({ x: 5, y: 1 })}>
+          Right Click Bandit
+        </button>
         <button type="button" onMouseEnter={() => props.onTileHover({ x: 5, y: 1 })}>
           Hover Bandit
+        </button>
+        <button type="button" onMouseEnter={() => props.onTileHover({ x: 2, y: 4 })}>
+          Hover Right One
+        </button>
+        <button type="button" onMouseEnter={() => props.onTileHover({ x: 3, y: 4 })}>
+          Hover Right Two
+        </button>
+        <button type="button" onMouseEnter={() => props.onTileHover({ x: 3, y: 3 })}>
+          Hover Up One
+        </button>
+        <button type="button" onMouseEnter={() => props.onTileHover({ x: 3, y: 2 })}>
+          Hover Up Two
         </button>
         <button type="button" onMouseEnter={() => props.onTileHover({ x: 1, y: 3 })}>
           Hover Nearby Tile
@@ -194,14 +210,14 @@ describe("BattleScreen interactions", () => {
     expect(screen.getByTestId("targetable-enemy-tiles")).toHaveTextContent("5,1");
   });
 
-  it("toggles an enemy threat selection when clicking that enemy", async () => {
+  it("adds an enemy threat selection with left click and clears it with right click", async () => {
     const user = renderBattleScreen();
 
     await user.click(screen.getByRole("button", { name: "Click Bandit" }));
     expect(screen.getByTestId("selected-enemy-threat-tiles")).toHaveTextContent("5,1");
     expect(screen.getByTestId("enemy-threat-outline-tiles").textContent).not.toEqual("");
 
-    await user.click(screen.getByRole("button", { name: "Click Bandit" }));
+    await user.click(screen.getByRole("button", { name: "Right Click Bandit" }));
     expect(screen.getByTestId("selected-enemy-threat-tiles")).toHaveTextContent("");
   });
 
@@ -260,6 +276,7 @@ describe("BattleScreen interactions", () => {
     await user.click(screen.getByRole("button", { name: "Click Aster" }));
 
     expect(screen.getByTestId("move-highlight-tiles")).toHaveTextContent("2,5");
+    expect(screen.getByTestId("attack-highlight-tiles")).not.toHaveTextContent("2,5");
   });
 
   it("restores the previous hover path when returning to an earlier tile", async () => {
@@ -274,6 +291,22 @@ describe("BattleScreen interactions", () => {
 
     await user.hover(screen.getByRole("button", { name: "Hover Nearby Tile" }));
     expect(screen.getByTestId("hovered-move-path")).toHaveTextContent("1,4 -> 1,3");
+  });
+
+  it("pops the hover path stack when revisiting the previous cell", async () => {
+    const user = renderBattleScreen();
+
+    await user.click(screen.getByRole("button", { name: "Click Aster" }));
+    await user.hover(screen.getByRole("button", { name: "Hover Right One" }));
+    await user.hover(screen.getByRole("button", { name: "Hover Right Two" }));
+    await user.hover(screen.getByRole("button", { name: "Hover Up One" }));
+    await user.hover(screen.getByRole("button", { name: "Hover Up Two" }));
+
+    expect(screen.getByTestId("hovered-move-path")).toHaveTextContent("1,4 -> 2,4 -> 3,4 -> 3,3 -> 3,2");
+
+    await user.hover(screen.getByRole("button", { name: "Hover Up One" }));
+
+    expect(screen.getByTestId("hovered-move-path")).toHaveTextContent("1,4 -> 2,4 -> 3,4 -> 3,3");
   });
 
   it("uses the currently previewed hover path when staging a move", async () => {

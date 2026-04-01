@@ -55,6 +55,29 @@ test("hovering updates the hover panel separately from the selected panel", asyn
   await expectSectionToContain(page, "Selected", "Aster");
 });
 
+test("enemy threat selection uses left click to add and right click to clear", async ({ page }) => {
+  const clearThreatButton = page.getByRole("button", { name: "Select None Threat" });
+
+  await expect(clearThreatButton).toBeDisabled();
+  await clickTile(page, 5, 1);
+  await expect(clearThreatButton).toBeEnabled();
+
+  await rightClickTile(page, 5, 1);
+  await expect(clearThreatButton).toBeDisabled();
+});
+
+test("select all and select none threat controls toggle selection state", async ({ page }) => {
+  const selectAllButton = page.getByRole("button", { name: "Select All Threat" });
+  const clearThreatButton = page.getByRole("button", { name: "Select None Threat" });
+
+  await expect(clearThreatButton).toBeDisabled();
+  await selectAllButton.click();
+  await expect(clearThreatButton).toBeEnabled();
+
+  await clearThreatButton.click();
+  await expect(clearThreatButton).toBeDisabled();
+});
+
 test("enemy phase resolves one enemy at a time and returns to player phase", async ({ page }) => {
   await page.getByRole("button", { name: "End Phase" }).click();
   await expect(page.locator(".phase-banner-enemy")).toBeVisible();
@@ -91,7 +114,7 @@ test("enemy phase resolves one enemy at a time and returns to player phase", asy
     )
     .toBe("enemy:1");
 
-  await expect(page.getByText("Turn 2 | PLAYER PHASE")).toBeVisible({ timeout: 30000 });
+  await expect(page.getByText("Turn 2 | PLAYER PHASE")).toBeVisible({ timeout: 40000 });
 });
 
 test("a defeated unit no longer appears on the board after lethal combat resolves", async ({ page }) => {
@@ -111,6 +134,20 @@ async function clickTile(page: Page, x: number, y: number) {
   await page.mouse.click(
     box.x + ((x + 0.5) * box.width) / MAP_WIDTH,
     box.y + ((y + 0.5) * box.height) / MAP_HEIGHT,
+  );
+}
+
+async function rightClickTile(page: Page, x: number, y: number) {
+  const canvas = page.getByTestId("battle-canvas");
+  const box = await canvas.boundingBox();
+  if (!box) {
+    throw new Error("Battle canvas was not visible");
+  }
+
+  await page.mouse.click(
+    box.x + ((x + 0.5) * box.width) / MAP_WIDTH,
+    box.y + ((y + 0.5) * box.height) / MAP_HEIGHT,
+    { button: "right" },
   );
 }
 

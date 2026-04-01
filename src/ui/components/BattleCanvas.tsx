@@ -32,8 +32,8 @@ type BattleCanvasProps = {
   onPresentationComplete?: () => void;
   onPreviewMoveComplete?: () => void;
   onTileClick: (position: Position) => void;
+  onTileRightClick: (position?: Position) => void;
   onTileHover: (position?: Position) => void;
-  onCancel: () => void;
 };
 
 type BoardMetrics = {
@@ -111,8 +111,8 @@ export function BattleCanvas(props: BattleCanvasProps) {
     onPresentationComplete,
     onPreviewMoveComplete,
     onTileClick,
+    onTileRightClick,
     onTileHover,
-    onCancel,
   } = props;
 
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -473,7 +473,8 @@ export function BattleCanvas(props: BattleCanvasProps) {
         }}
         onContextMenu={(event) => {
           event.preventDefault();
-          onCancel();
+          const position = getTileFromPointer(event, metrics, cameraOffsetTiles, width, height);
+          onTileRightClick(position);
         }}
         onMouseLeave={() => onTileHover(undefined)}
         onMouseMove={(event) => {

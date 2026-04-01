@@ -30,7 +30,6 @@ export function BattleScreen() {
   const [hoveredTile, setHoveredTile] = useState<Position | undefined>();
   const [stagedDestination, setStagedDestination] = useState<Position | undefined>();
   const [pendingAction, setPendingAction] = useState<PendingAction>("none");
-  const [selectedEnemyThreatIds, setSelectedEnemyThreatIds] = useState<string[]>([]);
   const [isBoardAnimating, setIsBoardAnimating] = useState(false);
   const [previewMove, setPreviewMove] = useState<
     | {
@@ -43,7 +42,6 @@ export function BattleScreen() {
   const [isPreviewMoveReady, setIsPreviewMoveReady] = useState(false);
   const [presentationQueue, setPresentationQueue] = useState<PresentationEvent[]>([]);
   const [pendingRuntimeState, setPendingRuntimeState] = useState<RuntimeGameState | undefined>();
-  const presentationLogRef = useRef<string[]>([]);
   const [grayLockUnitIds, setGrayLockUnitIds] = useState<string[]>([]);
   const [hoveredMovePath, setHoveredMovePath] = useState<Position[]>([]);
   const [phaseBanner, setPhaseBanner] = useState<{ phase: RuntimeGameState["phase"]; key: number }>({
@@ -59,10 +57,15 @@ export function BattleScreen() {
 
   const selectedUnit = runtime.selectedUnitId ? runtime.units[runtime.selectedUnitId] : undefined;
   const units = Object.values(runtime.units);
-  const enemyUnits = useMemo(
-    () => units.filter((unit) => unit.team === "enemy" && !unit.isDefeated),
-    [units],
-  );
+  const {
+    clearThreatSelection,
+    enemyThreatOutlineTiles,
+    handleEnemyThreatLeftClick,
+    handleEnemyThreatRightClick,
+    selectAllThreats,
+    selectedEnemyThreatIds,
+    selectedEnemyThreatTiles,
+  } = useEnemyThreatSelection(runtime, units);
   const pendingDefeatedUnitIds = useMemo(() => {
     if (!pendingRuntimeState) {
       return [];
@@ -170,12 +173,24 @@ export function BattleScreen() {
 
     return getAttackReachPreviewPositions(runtime, selectedUnit.id);
   }, [movePreviewState, runtime, selectedUnit, stagedDestination]);
-  const attackHighlightTiles =
-    pendingAction === "chooseAttackTarget"
-      ? []
-      : showingSelectedRanges
-        ? selectedAttackPreviewTiles
-        : hoveredAttackPreviewTiles;
+  const attackHighlightTiles = useMemo(() => {
+    if (pendingAction === "chooseAttackTarget") {
+      return [];
+    }
+
+    const moveTiles = showingSelectedRanges ? selectedMovePreviewTiles : hoveredMovePreviewTiles;
+    const attackTiles = showingSelectedRanges ? selectedAttackPreviewTiles : hoveredAttackPreviewTiles;
+    const moveKeys = new Set(moveTiles.map((tile) => `${tile.x},${tile.y}`));
+
+    return attackTiles.filter((tile) => !moveKeys.has(`${tile.x},${tile.y}`));
+  }, [
+    hoveredAttackPreviewTiles,
+    hoveredMovePreviewTiles,
+    pendingAction,
+    selectedAttackPreviewTiles,
+    selectedMovePreviewTiles,
+    showingSelectedRanges,
+  ]);
   const targetableEnemyTiles = useMemo(
     () =>
       pendingAction === "chooseAttackTarget"
@@ -186,31 +201,6 @@ export function BattleScreen() {
   const hoveredAttackTargetTile = hoveredAttackTarget
     ? { x: hoveredAttackTarget.position.x, y: hoveredAttackTarget.position.y }
     : undefined;
-  const enemyThreatOutlineTiles = useMemo(() => {
-    if (selectedEnemyThreatIds.length === 0) {
-      return [];
-    }
-
-    return uniquePositions(
-      units
-        .filter((unit) => selectedEnemyThreatIds.includes(unit.id) && !unit.isDefeated)
-        .flatMap((unit) => getThreatenedPositions(runtime, unit.id)),
-    );
-  }, [runtime, selectedEnemyThreatIds, units]);
-
-  const selectedEnemyThreatTiles = useMemo(
-    () =>
-      enemyUnits
-        .filter((unit) => selectedEnemyThreatIds.includes(unit.id))
-        .map((unit) => ({ x: unit.position.x, y: unit.position.y })),
-    [enemyUnits, selectedEnemyThreatIds],
-  );
-
-  useEffect(() => {
-    setSelectedEnemyThreatIds((current) =>
-      current.filter((unitId) => runtime.units[unitId] && !runtime.units[unitId].isDefeated && runtime.units[unitId].team === "enemy"),
-    );
-  }, [runtime.units]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -272,7 +262,7 @@ export function BattleScreen() {
     const timeoutId = window.setTimeout(() => {
       const result = previewNextEnemyAction(runtime);
       if (result.presentationEvents.length > 0) {
-        queuePresentationEvents(result.presentationEvents, "Enemy", result.nextState, runtime);
+        queuePresentationEvents(result.presentationEvents, result.nextState, runtime);
       } else {
         dispatch(replaceRuntimeState(result.nextState));
       }
@@ -324,17 +314,20 @@ export function BattleScreen() {
             </p>
           </div>
           <div className="battle-actions">
+            <a className="battle-link-button" href="/game-info">
+              Game Info
+            </a>
             <button
               type="button"
-              disabled={isPlayerBannerBlocking || enemyUnits.length === 0}
-              onClick={() => setSelectedEnemyThreatIds(enemyUnits.map((unit) => unit.id))}
+              disabled={isPlayerBannerBlocking || Object.keys(runtime.units).every((unitId) => runtime.units[unitId].team !== "enemy" || runtime.units[unitId].isDefeated)}
+              onClick={selectAllThreats}
             >
               Select All Threat
             </button>
             <button
               type="button"
               disabled={isPlayerBannerBlocking || selectedEnemyThreatIds.length === 0}
-              onClick={() => setSelectedEnemyThreatIds([])}
+              onClick={clearThreatSelection}
             >
               Select None Threat
             </button>
@@ -391,8 +384,8 @@ export function BattleScreen() {
                   onPresentationComplete={handlePresentationComplete}
                   onPreviewMoveComplete={() => setIsPreviewMoveReady(true)}
                   onTileClick={handleTileClick}
+                  onTileRightClick={handleTileRightClick}
                   onTileHover={handleTileHover}
-                  onCancel={handleCancel}
                 />
                 {selectedUnit && stagedDestination && isPreviewMoveReady && pendingAction === "chooseAttackTarget" ? (
                   <div className="map-targeting-banner">
@@ -447,22 +440,26 @@ export function BattleScreen() {
               <section className={`card compact-card unit-card ${getUnitCardClassName(hoveredUnit?.team)}`}>
                 <h2>Hover</h2>
                 {hoveredUnit ? (
-                  renderUnitSummary(runtime, hoveredUnit, {
-                    footer: selectedUnit && hoveredCombatPreview
-                      ? [
-                          `Combat: ${selectedUnit.name} deals ${formatDamageRange(
-                            hoveredCombatPreview.attackerMinDamage,
-                            hoveredCombatPreview.attackerMaxDamage,
-                          )}`,
-                          `Counter: ${hoveredCombatPreview.defenderCanCounter
-                            ? formatDamageRange(
-                                hoveredCombatPreview.defenderMinDamage,
-                                hoveredCombatPreview.defenderMaxDamage,
-                              )
-                            : "None"}`,
-                        ]
-                      : undefined,
-                  })
+                  <UnitSummaryCard
+                    runtime={runtime}
+                    unit={hoveredUnit}
+                    footer={
+                      selectedUnit && hoveredCombatPreview
+                        ? [
+                            `Combat: ${selectedUnit.name} deals ${formatDamageRange(
+                              hoveredCombatPreview.attackerMinDamage,
+                              hoveredCombatPreview.attackerMaxDamage,
+                            )}`,
+                            `Counter: ${hoveredCombatPreview.defenderCanCounter
+                              ? formatDamageRange(
+                                  hoveredCombatPreview.defenderMinDamage,
+                                  hoveredCombatPreview.defenderMaxDamage,
+                                )
+                              : "None"}`,
+                          ]
+                        : undefined
+                    }
+                  />
                 ) : hoveredTile ? (
                   <div className="unit-summary unit-summary-empty">
                     <p>Empty Tile</p>
@@ -486,15 +483,17 @@ export function BattleScreen() {
               <section className={`card compact-card unit-card ${getUnitCardClassName(selectedUnit?.team)}`}>
                 <h2>Selected</h2>
                 {selectedUnit ? (
-                  renderUnitSummary(runtime, selectedUnit, {
-                    footer: [
+                  <UnitSummaryCard
+                    runtime={runtime}
+                    unit={selectedUnit}
+                    footer={[
                       selectedUnit.hasMoved ? "Moved this turn" : "Ready to move",
                       selectedUnit.hasActed ? "Action spent" : "Action available",
                       stagedDestination && isPreviewMoveReady
                         ? `Staged at ${stagedDestination.x},${stagedDestination.y}`
                         : "Click a reachable tile to stage a move.",
-                    ],
-                  })
+                    ]}
+                  />
                 ) : (
                   <p>No unit selected.</p>
                 )}
@@ -557,11 +556,7 @@ export function BattleScreen() {
     }
 
     if (clickedUnit?.team === "enemy") {
-      setSelectedEnemyThreatIds((current) =>
-        current.includes(clickedUnit.id)
-          ? current.filter((unitId) => unitId !== clickedUnit.id)
-          : [...current, clickedUnit.id],
-      );
+      handleEnemyThreatLeftClick(clickedUnit.id);
       return;
     }
 
@@ -608,6 +603,30 @@ export function BattleScreen() {
     }
   }
 
+  function handleTileRightClick(position?: Position) {
+    if (isPlayerBannerBlocking || (Boolean(previewMove) && !isPreviewMoveReady)) {
+      return;
+    }
+
+    if (!position) {
+      handleCancel();
+      return;
+    }
+
+    if (pendingAction === "chooseAttackTarget" || stagedDestination || selectedUnit) {
+      handleCancel();
+      return;
+    }
+
+    const clickedUnit = getUnitAtPosition(units, position);
+    if (clickedUnit?.team === "enemy" && !clickedUnit.isDefeated) {
+      handleEnemyThreatRightClick(clickedUnit.id);
+      return;
+    }
+
+    handleCancel();
+  }
+
   function handleAttack(defenderId?: string) {
     if (isPlayerBannerBlocking || !selectedUnit || !defenderId) {
       return;
@@ -627,7 +646,7 @@ export function BattleScreen() {
       : result.presentationEvents;
 
     if (presentationEvents.length > 0) {
-      queuePresentationEvents(presentationEvents, "Player", result.nextState, runtime);
+      queuePresentationEvents(presentationEvents, result.nextState, runtime);
     } else {
       dispatch(replaceRuntimeState(result.nextState));
       clearStagedAction();
@@ -649,7 +668,7 @@ export function BattleScreen() {
       dispatch(replaceRuntimeState(result.nextState));
     } else {
       if (result.presentationEvents.length > 0) {
-        queuePresentationEvents(result.presentationEvents, "Player", result.nextState, runtime);
+        queuePresentationEvents(result.presentationEvents, result.nextState, runtime);
       } else {
         dispatch(replaceRuntimeState(result.nextState));
       }
@@ -729,25 +748,18 @@ export function BattleScreen() {
 
   function queuePresentationEvents(
     events: PresentationEvent[],
-    source: "Player" | "Enemy",
     nextState: RuntimeGameState,
     previousState: RuntimeGameState,
   ) {
     setPendingRuntimeState(nextState);
     setPresentationQueue(events);
     setGrayLockUnitIds(getGrayLockUnitIds(previousState, nextState));
-    presentationLogRef.current = [
-      `${source} queued ${events.length} event(s)`,
-      ...events.map((event) => `${source}: ${formatPresentationEvent(event)}`),
-      ...presentationLogRef.current,
-    ].slice(0, 18);
   }
 
   function handlePresentationComplete() {
     if (pendingRuntimeState) {
       dispatch(replaceRuntimeState(pendingRuntimeState));
     }
-    presentationLogRef.current = ["Queue complete", ...presentationLogRef.current].slice(0, 18);
     setGrayLockUnitIds([]);
     setPendingRuntimeState(undefined);
     setPresentationQueue([]);
@@ -855,10 +867,6 @@ function buildHoveredMovePath(
     return fallbackPath;
   }
 
-  if (currentStack.length > 0 && fallbackPath.length < currentStack.length) {
-    return fallbackPath;
-  }
-
   const origin = unit.position;
   const normalizedStack =
     currentStack.length > 0 &&
@@ -883,6 +891,10 @@ function buildHoveredMovePath(
     if (extendedPath.length - 1 <= getUnitMovement(runtime, unit) && isPathEfficientEnough(extendedPath, fallbackPath)) {
       return extendedPath;
     }
+  }
+
+  if (currentStack.length > 0 && fallbackPath.length < currentStack.length) {
+    return fallbackPath;
   }
 
   return fallbackPath;
@@ -941,22 +953,6 @@ function positionsEqual(left: Position, right: Position): boolean {
   return left.x === right.x && left.y === right.y;
 }
 
-function formatPresentationEvent(event: PresentationEvent): string {
-  if (event.type === "move") {
-    return `${event.unitId} move ${event.from.x},${event.from.y} -> ${event.to.x},${event.to.y}`;
-  }
-
-  if (event.type === "pause") {
-    return `${event.unitId} pause ${event.durationMs}ms`;
-  }
-
-  return `${event.attackerId} attacks ${event.defenderId} (${event.defenderFromHp} -> ${event.defenderToHp}${
-    event.defenderCanCounter
-      ? `, counter ${event.attackerFromHp} -> ${event.attackerToHp}`
-      : ", no counter"
-  })`;
-}
-
 function getGrayLockUnitIds(
   previousState: RuntimeGameState,
   nextState: RuntimeGameState,
@@ -982,11 +978,61 @@ function formatDamageRange(minDamage: number, maxDamage: number): string {
   return `${minDamage}-${maxDamage}`;
 }
 
-function renderUnitSummary(
-  runtime: RuntimeGameState,
-  unit: UnitState,
-  options?: { footer?: string[] },
-) {
+function useEnemyThreatSelection(runtime: RuntimeGameState, units: UnitState[]) {
+  const [selectedEnemyThreatIds, setSelectedEnemyThreatIds] = useState<string[]>([]);
+  const enemyUnits = useMemo(
+    () => units.filter((unit) => unit.team === "enemy" && !unit.isDefeated),
+    [units],
+  );
+
+  useEffect(() => {
+    setSelectedEnemyThreatIds((current) =>
+      current.filter((unitId) => runtime.units[unitId] && !runtime.units[unitId].isDefeated && runtime.units[unitId].team === "enemy"),
+    );
+  }, [runtime.units]);
+
+  const enemyThreatOutlineTiles = useMemo(() => {
+    if (selectedEnemyThreatIds.length === 0) {
+      return [];
+    }
+
+    return uniquePositions(
+      units
+        .filter((unit) => selectedEnemyThreatIds.includes(unit.id) && !unit.isDefeated)
+        .flatMap((unit) => getThreatenedPositions(runtime, unit.id)),
+    );
+  }, [runtime, selectedEnemyThreatIds, units]);
+
+  const selectedEnemyThreatTiles = useMemo(
+    () =>
+      enemyUnits
+        .filter((unit) => selectedEnemyThreatIds.includes(unit.id))
+        .map((unit) => ({ x: unit.position.x, y: unit.position.y })),
+    [enemyUnits, selectedEnemyThreatIds],
+  );
+
+  return {
+    clearThreatSelection: () => setSelectedEnemyThreatIds([]),
+    enemyThreatOutlineTiles,
+    handleEnemyThreatLeftClick: (unitId: string) =>
+      setSelectedEnemyThreatIds((current) => (current.includes(unitId) ? current : [...current, unitId])),
+    handleEnemyThreatRightClick: (unitId: string) =>
+      setSelectedEnemyThreatIds((current) => (current.includes(unitId) ? current.filter((id) => id !== unitId) : current)),
+    selectAllThreats: () => setSelectedEnemyThreatIds(enemyUnits.map((unit) => unit.id)),
+    selectedEnemyThreatIds,
+    selectedEnemyThreatTiles,
+  };
+}
+
+function UnitSummaryCard({
+  footer,
+  runtime,
+  unit,
+}: {
+  footer?: string[];
+  runtime: RuntimeGameState;
+  unit: UnitState;
+}) {
   const classDefinition = runtime.map.classes.find((classData) => classData.id === unit.classId);
   const inventory = unit.inventory
     .map((weaponId) => runtime.map.weapons.find((weapon) => weapon.id === weaponId))
@@ -1042,9 +1088,9 @@ function renderUnitSummary(
         </p>
       </div>
 
-      {options?.footer && options.footer.length > 0 ? (
+      {footer && footer.length > 0 ? (
         <div className="unit-footer-list">
-          {options.footer.map((line) => (
+          {footer.map((line) => (
             <p key={line}>{line}</p>
           ))}
         </div>
