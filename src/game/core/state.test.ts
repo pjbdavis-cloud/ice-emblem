@@ -92,9 +92,9 @@ function createTestMap(units: UnitDefinition[]): BattleMapDefinition {
       },
     ],
     weapons: [
-      { id: "iron-sword", name: "Iron Sword", category: "sword", might: 5, complexity: 1, minRange: 1, maxRange: 1, requiredRank: "E" },
-      { id: "iron-bow", name: "Iron Bow", category: "bow", might: 6, complexity: 2, minRange: 2, maxRange: 2, requiredRank: "E" },
-      { id: "fire-tome", name: "Fire Tome", category: "elemental_magic", might: 5, complexity: 2, minRange: 1, maxRange: 2, requiredRank: "E" },
+      { id: "iron-sword", name: "Iron Sword", category: "sword", power: 5, complexity: 1, minRange: 1, maxRange: 1, requiredRank: "E" },
+      { id: "iron-bow", name: "Iron Bow", category: "bow", power: 6, complexity: 2, minRange: 2, maxRange: 2, requiredRank: "E" },
+      { id: "fire-tome", name: "Fire Tome", category: "elemental_magic", power: 5, complexity: 2, minRange: 1, maxRange: 2, requiredRank: "E" },
     ],
     units,
   };
@@ -352,15 +352,121 @@ describe("enemy decisions and phase progression", () => {
           currentHp: 1,
           equippedWeaponId: "iron-sword",
         }),
+        createUnit({
+          id: "enemy-archer",
+          team: "enemy",
+          classId: "archer",
+          position: { x: 5, y: 5 },
+          equippedWeaponId: "iron-bow",
+          inventory: ["iron-bow"],
+          weaponProficiencies: { bow: "E" },
+        }),
       ]),
     );
 
-    const enemyPhaseState = { ...runtime, phase: "enemy" as const };
+    const enemyPhaseState = {
+      ...runtime,
+      phase: "enemy" as const,
+      units: {
+        ...runtime.units,
+        "enemy-archer": {
+          ...runtime.units["enemy-archer"],
+          hasActed: true,
+          hasMoved: true,
+        },
+      },
+    };
     const result = previewNextEnemyAction(enemyPhaseState);
 
     expect(result.nextState.phase).toBe("player");
     expect(result.nextState.turnNumber).toBe(2);
     expect(result.nextState.units["enemy-fighter"].hasActed).toBe(false);
     expect(result.nextState.units["enemy-fighter"].hasMoved).toBe(false);
+  });
+});
+
+describe("victory and defeat rules", () => {
+  it("wins the map when the last enemy is defeated on a route objective", () => {
+    const runtime = createInitialRuntimeState(
+      createTestMap([
+        createUnit({
+          id: "player-lead",
+          team: "player",
+          position: { x: 1, y: 1 },
+          isLeader: true,
+        }),
+        createUnit({
+          id: "enemy-fighter",
+          team: "enemy",
+          position: { x: 2, y: 1 },
+          currentHp: 1,
+        }),
+      ]),
+    );
+
+    const nextState = applyAction(runtime, {
+      type: "attackUnit",
+      attackerId: "player-lead",
+      defenderId: "enemy-fighter",
+    });
+
+    expect(nextState.gameResult).toBe("victory");
+    expect(nextState.selectedUnitId).toBeUndefined();
+  });
+
+  it("loses the map when the player's main unit is defeated", () => {
+    const runtime = createInitialRuntimeState(
+      createTestMap([
+        createUnit({
+          id: "player-lead",
+          team: "player",
+          position: { x: 1, y: 1 },
+          currentHp: 1,
+          isLeader: true,
+        }),
+        createUnit({
+          id: "enemy-fighter",
+          team: "enemy",
+          position: { x: 2, y: 1 },
+          stats: { maxHp: 20, strength: 10, skill: 6, luck: 4, defense: 4, resistance: 3, speed: 5 },
+        }),
+      ]),
+    );
+
+    const enemyPhaseState = { ...runtime, phase: "enemy" as const };
+    const nextState = applyAction(enemyPhaseState, {
+      type: "attackUnit",
+      attackerId: "enemy-fighter",
+      defenderId: "player-lead",
+    });
+
+    expect(nextState.gameResult).toBe("defeat");
+    expect(nextState.units["player-lead"].isDefeated).toBe(true);
+  });
+
+  it("blocks further actions after the map is over", () => {
+    const runtime = createInitialRuntimeState(
+      createTestMap([
+        createUnit({
+          id: "player-lead",
+          team: "player",
+          position: { x: 1, y: 1 },
+          isLeader: true,
+        }),
+      ]),
+    );
+
+    const completedState = {
+      ...runtime,
+      gameResult: "victory" as const,
+    };
+
+    const nextState = applyAction(completedState, {
+      type: "selectUnit",
+      unitId: "player-lead",
+    });
+
+    expect(nextState).toBe(completedState);
+    expect(previewNextEnemyAction(completedState).nextState).toBe(completedState);
   });
 });

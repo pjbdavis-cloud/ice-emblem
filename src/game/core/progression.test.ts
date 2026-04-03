@@ -56,7 +56,7 @@ function createTestMap(units: UnitDefinition[]): BattleMapDefinition {
       },
     ],
     weapons: [
-      { id: "iron-axe", name: "Iron Axe", category: "axe", might: 7, complexity: 3, minRange: 1, maxRange: 1, requiredRank: "E" },
+      { id: "iron-axe", name: "Iron Axe", category: "axe", power: 7, complexity: 3, minRange: 1, maxRange: 1, requiredRank: "E" },
     ],
     units,
   };

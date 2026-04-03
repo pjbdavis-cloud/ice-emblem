@@ -55,7 +55,7 @@ function createDemoTiles(width: number, height: number): TileDefinition[][] {
 
 export const demoMap: BattleMapDefinition = {
   id: "demo-skirmish",
-  name: "Demo Skirmish",
+  name: "Demo Route Skirmish",
   width: 20,
   height: 15,
   tiles: createDemoTiles(20, 15),
@@ -185,14 +185,14 @@ export const demoMap: BattleMapDefinition = {
     },
   ],
   weapons: [
-    { id: "iron-sword", name: "Iron Sword", category: "sword", might: 5, complexity: 1, minRange: 1, maxRange: 1, requiredRank: "E" },
-    { id: "iron-lance", name: "Iron Lance", category: "lance", might: 6, complexity: 2, minRange: 1, maxRange: 1, requiredRank: "E" },
-    { id: "iron-axe", name: "Iron Axe", category: "axe", might: 7, complexity: 3, minRange: 1, maxRange: 1, requiredRank: "E" },
-    { id: "iron-bow", name: "Iron Bow", category: "bow", might: 6, complexity: 2, minRange: 2, maxRange: 2, requiredRank: "E" },
-    { id: "fire-tome", name: "Fire Tome", category: "elemental_magic", might: 5, complexity: 2, minRange: 1, maxRange: 2, requiredRank: "E" },
-    { id: "glimmer", name: "Glimmer", category: "light_magic", might: 4, complexity: 2, minRange: 1, maxRange: 2, requiredRank: "E" },
-    { id: "umbra", name: "Umbra", category: "dark_magic", might: 5, complexity: 3, minRange: 1, maxRange: 2, requiredRank: "E" },
-    { id: "mend", name: "Mend", category: "healing", might: 0, complexity: 1, minRange: 1, maxRange: 2, requiredRank: "E" },
+    { id: "iron-sword", name: "Iron Sword", category: "sword", power: 5, complexity: 1, minRange: 1, maxRange: 1, requiredRank: "E" },
+    { id: "iron-lance", name: "Iron Lance", category: "lance", power: 6, complexity: 2, minRange: 1, maxRange: 1, requiredRank: "E" },
+    { id: "iron-axe", name: "Iron Axe", category: "axe", power: 7, complexity: 3, minRange: 1, maxRange: 1, requiredRank: "E" },
+    { id: "iron-bow", name: "Iron Bow", category: "bow", power: 6, complexity: 2, minRange: 2, maxRange: 2, requiredRank: "E" },
+    { id: "fire-tome", name: "Fire Tome", category: "elemental_magic", power: 5, complexity: 2, minRange: 1, maxRange: 2, requiredRank: "E" },
+    { id: "glimmer", name: "Glimmer", category: "light_magic", power: 4, complexity: 2, minRange: 1, maxRange: 2, requiredRank: "E" },
+    { id: "umbra", name: "Umbra", category: "dark_magic", power: 5, complexity: 3, minRange: 1, maxRange: 2, requiredRank: "E" },
+    { id: "mend", name: "Mend", category: "healing", power: 0, complexity: 1, minRange: 1, maxRange: 2, requiredRank: "E" },
   ],
   units: [
     {
@@ -345,7 +345,6 @@ export const demoMap: BattleMapDefinition = {
         elemental_magic: "E",
       },
       behavior: "hold_position",
-      isBoss: true,
     },
     {
       id: "enemy-mercenary",

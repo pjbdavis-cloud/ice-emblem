@@ -141,6 +141,34 @@ test("a defeated unit no longer appears on the board after lethal combat resolve
   await expectSectionToContain(page, "Hover", "Tile: 3,1");
 });
 
+test("shows a victory overlay and restart after the battle ends", async ({ page }) => {
+  await setGameResult(page, "victory");
+
+  const overlay = page.getByTestId("battle-result-overlay");
+  await expect(overlay).toContainText("Victory");
+  await expect(overlay.getByRole("button", { name: "Restart" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "End Phase" })).toHaveCount(0);
+});
+
+test("shows a defeat overlay and prevents further board interaction", async ({ page }) => {
+  await setGameResult(page, "defeat");
+
+  await clickTile(page, 1, 4);
+  await expect(page.getByText("No unit selected.")).toBeVisible();
+  await expect(page.getByTestId("battle-result-overlay")).toContainText("Defeat");
+});
+
+test("restart from a game-over overlay resets the level", async ({ page }) => {
+  await setGameResult(page, "victory");
+
+  await page.getByRole("button", { name: "Restart" }).click();
+
+  await expect(page.getByTestId("battle-result-overlay")).toHaveCount(0);
+  await expect(page.getByText("Turn 1 | PLAYER PHASE")).toBeVisible();
+  await clickTile(page, 1, 4);
+  await expectSelectedPanelToContain(page, "Aster");
+});
+
 async function clickTile(page: Page, x: number, y: number) {
   const canvas = page.getByTestId("battle-canvas");
   const box = await canvas.boundingBox();
@@ -284,4 +312,40 @@ async function setDefeatedFighterScenario(page: Page) {
 
     api.replaceRuntimeState(runtime);
   });
+}
+
+async function setGameResult(page: Page, gameResult: "victory" | "defeat") {
+  await page.evaluate((result) => {
+    const api = (
+      window as typeof window & {
+        __ICE_EMBLEM_TEST_API__?: {
+          getRuntimeState: () => unknown;
+          replaceRuntimeState: (runtime: unknown) => void;
+        };
+      }
+    ).__ICE_EMBLEM_TEST_API__;
+
+    if (!api) {
+      throw new Error("Missing test API");
+    }
+
+    const runtime = structuredClone(api.getRuntimeState() as Record<string, unknown>) as {
+      gameResult: "in_progress" | "victory" | "defeat";
+      selectedUnitId?: string;
+      units: Record<string, {
+        currentHp: number;
+        isDefeated: boolean;
+      }>;
+    };
+
+    runtime.gameResult = result;
+    runtime.selectedUnitId = undefined;
+
+    if (result === "defeat") {
+      runtime.units["player-lord"].currentHp = 0;
+      runtime.units["player-lord"].isDefeated = true;
+    }
+
+    api.replaceRuntimeState(runtime);
+  }, gameResult);
 }

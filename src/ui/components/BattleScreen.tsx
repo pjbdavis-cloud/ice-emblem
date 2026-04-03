@@ -26,6 +26,8 @@ const PHASE_BANNER_DURATION_MS = 1600;
 export function BattleScreen() {
   const dispatch = useAppDispatch();
   const runtime = useAppSelector((state) => state.game.runtime);
+  const isGameOver = runtime.gameResult !== "in_progress";
+  const gameResultLabel = runtime.gameResult === "victory" ? "Victory" : "Defeat";
 
   const [hoveredTile, setHoveredTile] = useState<Position | undefined>();
   const [stagedDestination, setStagedDestination] = useState<Position | undefined>();
@@ -56,6 +58,7 @@ export function BattleScreen() {
   const [bannerInstance, setBannerInstance] = useState(0);
 
   const selectedUnit = runtime.selectedUnitId ? runtime.units[runtime.selectedUnitId] : undefined;
+  const objectiveLabel = formatObjectiveLabel(runtime.map.objectives.type);
   const units = Object.values(runtime.units);
   const {
     clearThreatSelection,
@@ -256,8 +259,17 @@ export function BattleScreen() {
     : undefined;
 
   useEffect(() => {
+    if (!isGameOver) {
+      return;
+    }
+
+    clearStagedAction();
+    setHoveredMovePath([]);
+  }, [isGameOver]);
+
+  useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (isPlayerBannerBlocking) {
+      if (isPlayerBannerBlocking || isGameOver) {
         event.preventDefault();
         return;
       }
@@ -272,7 +284,7 @@ export function BattleScreen() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isPlayerBannerBlocking, pendingAction, selectedUnit, stagedDestination]);
+  }, [isGameOver, isPlayerBannerBlocking, pendingAction, selectedUnit, stagedDestination]);
 
   useEffect(() => {
     if (previousPhaseRef.current === runtime.phase) {
@@ -305,6 +317,7 @@ export function BattleScreen() {
   useEffect(() => {
     if (
       runtime.phase !== "enemy" ||
+      isGameOver ||
       isBoardAnimating ||
       presentationQueue.length > 0 ||
       pendingRuntimeState
@@ -322,7 +335,7 @@ export function BattleScreen() {
     }, ENEMY_PHASE_STEP_DELAY_MS);
 
     return () => window.clearTimeout(timeoutId);
-  }, [dispatch, isBoardAnimating, pendingRuntimeState, presentationQueue.length, runtime]);
+  }, [dispatch, isBoardAnimating, isGameOver, pendingRuntimeState, presentationQueue.length, runtime]);
 
   useEffect(() => {
     if (!stagedDestination) {
@@ -363,41 +376,43 @@ export function BattleScreen() {
             <p className="eyebrow">Prototype</p>
             <h1>Fire Emblem Web</h1>
             <p className="phase-label">
-              Turn {runtime.turnNumber} | {runtime.phase.toUpperCase()} PHASE
+              Turn {runtime.turnNumber} | {isGameOver ? gameResultLabel.toUpperCase() : `${runtime.phase.toUpperCase()} PHASE`} | Objective: {objectiveLabel}
             </p>
           </div>
-          <div className="battle-actions">
-            <a className="battle-link-button" href="/game-info">
-              Game Info
-            </a>
-            <button
-              type="button"
-              disabled={isPlayerBannerBlocking || Object.keys(runtime.units).every((unitId) => runtime.units[unitId].team !== "enemy" || runtime.units[unitId].isDefeated)}
-              onClick={selectAllThreats}
-            >
-              Select All Threat
-            </button>
-            <button
-              type="button"
-              disabled={isPlayerBannerBlocking || selectedEnemyThreatIds.length === 0}
-              onClick={clearThreatSelection}
-            >
-              Select None Threat
-            </button>
-            <button
-              type="button"
-              disabled={isPlayerBannerBlocking || !canUndo(runtime)}
-              onClick={() => dispatch(undoAction())}
-            >
-              Undo
-            </button>
-            <button type="button" disabled={isPlayerBannerBlocking} onClick={handleReset}>
-              Reset
-            </button>
-            <button type="button" disabled={isPlayerBannerBlocking} onClick={handleEndPhase}>
-              End Phase
-            </button>
-          </div>
+          {isGameOver ? null : (
+            <div className="battle-actions">
+              <a className="battle-link-button" href="/game-info">
+                Game Info
+              </a>
+              <button
+                type="button"
+                disabled={isPlayerBannerBlocking || Object.keys(runtime.units).every((unitId) => runtime.units[unitId].team !== "enemy" || runtime.units[unitId].isDefeated)}
+                onClick={selectAllThreats}
+              >
+                Select All Threat
+              </button>
+              <button
+                type="button"
+                disabled={isPlayerBannerBlocking || selectedEnemyThreatIds.length === 0}
+                onClick={clearThreatSelection}
+              >
+                Select None Threat
+              </button>
+              <button
+                type="button"
+                disabled={isPlayerBannerBlocking || !canUndo(runtime)}
+                onClick={() => dispatch(undoAction())}
+              >
+                Undo
+              </button>
+              <button type="button" disabled={isPlayerBannerBlocking} onClick={handleReset}>
+                Reset
+              </button>
+              <button type="button" disabled={isPlayerBannerBlocking} onClick={handleEndPhase}>
+                End Phase
+              </button>
+            </div>
+          )}
         </header>
 
         <div className="layout">
@@ -433,6 +448,7 @@ export function BattleScreen() {
                   presentationQueue={presentationQueue}
                   grayLockUnitIds={grayLockUnitIds}
                   pendingDefeatedUnitIds={pendingDefeatedUnitIds}
+                  isInteractionLocked={isGameOver || isPlayerBannerBlocking}
                   onAnimationStateChange={setIsBoardAnimating}
                   onPresentationComplete={handlePresentationComplete}
                   onPreviewMoveComplete={() => setIsPreviewMoveReady(true)}
@@ -440,6 +456,24 @@ export function BattleScreen() {
                   onTileRightClick={handleTileRightClick}
                   onTileHover={handleTileHover}
                 />
+                {isGameOver ? (
+                  <div
+                    aria-live="assertive"
+                    className={`battle-result-overlay battle-result-overlay-${runtime.gameResult}`}
+                    data-testid="battle-result-overlay"
+                  >
+                    <p className="battle-result-kicker">Battle Complete</p>
+                    <h2>{gameResultLabel}</h2>
+                    <p>
+                      {runtime.gameResult === "victory"
+                        ? "All enemies have been defeated."
+                        : "Your main unit has fallen."}
+                    </p>
+                    <button type="button" onClick={handleReset}>
+                      Restart
+                    </button>
+                  </div>
+                ) : null}
                 {selectedUnit && stagedDestination && isPreviewMoveReady && pendingAction === "chooseAttackTarget" ? (
                   <div className="map-targeting-banner">
                     <span>Select a target to attack.</span>
@@ -649,7 +683,7 @@ export function BattleScreen() {
   );
 
   function handleTileClick(position: Position) {
-    if (isPlayerBannerBlocking || (Boolean(previewMove) && !isPreviewMoveReady)) {
+    if (isGameOver || isPlayerBannerBlocking || (Boolean(previewMove) && !isPreviewMoveReady)) {
       return;
     }
 
@@ -718,7 +752,7 @@ export function BattleScreen() {
   }
 
   function handleTileRightClick(position?: Position) {
-    if (isPlayerBannerBlocking || (Boolean(previewMove) && !isPreviewMoveReady)) {
+    if (isGameOver || isPlayerBannerBlocking || (Boolean(previewMove) && !isPreviewMoveReady)) {
       return;
     }
 
@@ -742,7 +776,7 @@ export function BattleScreen() {
   }
 
   function handleAttack(defenderId?: string) {
-    if (isPlayerBannerBlocking || !selectedUnit || !defenderId) {
+    if (isGameOver || isPlayerBannerBlocking || !selectedUnit || !defenderId) {
       return;
     }
 
@@ -768,7 +802,7 @@ export function BattleScreen() {
   }
 
   function handleWait() {
-    if (isPlayerBannerBlocking || !selectedUnit) {
+    if (isGameOver || isPlayerBannerBlocking || !selectedUnit) {
       return;
     }
 
@@ -801,7 +835,7 @@ export function BattleScreen() {
   }
 
   function handleEndPhase() {
-    if (isPlayerBannerBlocking) {
+    if (isGameOver || isPlayerBannerBlocking) {
       return;
     }
 
@@ -811,7 +845,7 @@ export function BattleScreen() {
   }
 
   function handleCancel() {
-    if (isPlayerBannerBlocking) {
+    if (isGameOver || isPlayerBannerBlocking) {
       return;
     }
 
@@ -1090,6 +1124,18 @@ function getGrayLockUnitIds(
 
 function canUnitTakePlayerActions(unit: UnitState, runtime: RuntimeGameState) {
   return unit.team === runtime.phase && !unit.hasMoved && !unit.hasActed && !unit.isDefeated;
+}
+
+function formatObjectiveLabel(objectiveType: RuntimeGameState["map"]["objectives"]["type"]) {
+  if (objectiveType === "route") {
+    return "Route all enemies";
+  }
+
+  if (objectiveType === "defeatBoss") {
+    return "Defeat the boss";
+  }
+
+  return objectiveType;
 }
 
 function formatDamageRange(minDamage: number, maxDamage: number): string {

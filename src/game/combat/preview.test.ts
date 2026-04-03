@@ -76,10 +76,10 @@ function createTestMap(units: UnitDefinition[]): BattleMapDefinition {
       },
     ],
     weapons: [
-      { id: "iron-sword", name: "Iron Sword", category: "sword", might: 5, complexity: 1, minRange: 1, maxRange: 1, requiredRank: "E" },
-      { id: "iron-bow", name: "Iron Bow", category: "bow", might: 6, complexity: 2, minRange: 2, maxRange: 2, requiredRank: "E" },
-      { id: "fire-tome", name: "Fire Tome", category: "elemental_magic", might: 5, complexity: 2, minRange: 1, maxRange: 2, requiredRank: "E" },
-      { id: "war-axe", name: "War Axe", category: "axe", might: 8, complexity: 4, minRange: 1, maxRange: 1, requiredRank: "E" },
+      { id: "iron-sword", name: "Iron Sword", category: "sword", power: 5, complexity: 1, minRange: 1, maxRange: 1, requiredRank: "E" },
+      { id: "iron-bow", name: "Iron Bow", category: "bow", power: 6, complexity: 2, minRange: 2, maxRange: 2, requiredRank: "E" },
+      { id: "fire-tome", name: "Fire Tome", category: "elemental_magic", power: 5, complexity: 2, minRange: 1, maxRange: 2, requiredRank: "E" },
+      { id: "war-axe", name: "War Axe", category: "axe", power: 8, complexity: 4, minRange: 1, maxRange: 1, requiredRank: "E" },
     ],
     units,
   };

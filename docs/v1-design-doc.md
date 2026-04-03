@@ -45,7 +45,7 @@ Build a deterministic, turn-based tactical RPG as a web app in React, inspired b
 - Combat previews should show exact player damage and the exact enemy counter result when applicable.
 - Base damage starts from:
 
-`damage = max(minDamage, attack + weaponMight + triangleBonus + speedBonus - defense)`
+`damage = max(minDamage, attack + weaponPower + triangleBonus + speedBonus - defense)`
 
 - `minDamage` should be configurable.
 - No double attacks in v1.

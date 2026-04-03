@@ -28,6 +28,7 @@ type BattleCanvasProps = {
   presentationQueue: PresentationEvent[];
   grayLockUnitIds: string[];
   pendingDefeatedUnitIds: string[];
+  isInteractionLocked?: boolean;
   onAnimationStateChange?: (isAnimating: boolean) => void;
   onPresentationComplete?: () => void;
   onPreviewMoveComplete?: () => void;
@@ -107,6 +108,7 @@ export function BattleCanvas(props: BattleCanvasProps) {
     presentationQueue,
     grayLockUnitIds,
     pendingDefeatedUnitIds,
+    isInteractionLocked = false,
     onAnimationStateChange,
     onPresentationComplete,
     onPreviewMoveComplete,
@@ -155,6 +157,7 @@ export function BattleCanvas(props: BattleCanvasProps) {
     [enemyThreatOutlineTiles],
   );
   const isZoomLocked =
+    isInteractionLocked ||
     runtime.phase === "enemy" ||
     Boolean(activePresentation) ||
     Boolean(activePreviewMove && !activePreviewMove.completed);
@@ -284,6 +287,10 @@ export function BattleCanvas(props: BattleCanvasProps) {
         return;
       }
 
+      if (isInteractionLocked) {
+        return;
+      }
+
       if (key === "arrowleft" || key === "a") {
         event.preventDefault();
         panCamera(-1, 0);
@@ -310,7 +317,7 @@ export function BattleCanvas(props: BattleCanvasProps) {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [height, isZoomLocked, metrics, viewportPresetIndex, width]);
+  }, [height, isInteractionLocked, isZoomLocked, metrics, viewportPresetIndex, width]);
 
   useEffect(() => {
     if (presentationQueue.length === 0 || activePresentation) {
@@ -459,13 +466,20 @@ export function BattleCanvas(props: BattleCanvasProps) {
   ]);
 
   return (
-    <div ref={wrapperRef} className="battle-canvas-shell">
+    <div
+      ref={wrapperRef}
+      className={`battle-canvas-shell${isInteractionLocked ? " battle-canvas-shell-locked" : ""}`}
+    >
       <canvas
         ref={canvasRef}
         data-testid="battle-canvas"
-        className="battle-canvas"
+        className={`battle-canvas${isInteractionLocked ? " battle-canvas-locked" : ""}`}
+        aria-label={runtime.mainUnitId ? "Battlefield with marked main unit" : "Battlefield"}
         style={{ width: metrics.viewportWidth, height: metrics.viewportHeight }}
         onClick={(event) => {
+          if (isInteractionLocked) {
+            return;
+          }
           const position = getTileFromPointer(event, metrics, cameraOffsetTiles, width, height);
           if (position) {
             onTileClick(position);
@@ -473,11 +487,18 @@ export function BattleCanvas(props: BattleCanvasProps) {
         }}
         onContextMenu={(event) => {
           event.preventDefault();
+          if (isInteractionLocked) {
+            return;
+          }
           const position = getTileFromPointer(event, metrics, cameraOffsetTiles, width, height);
           onTileRightClick(position);
         }}
         onMouseLeave={() => onTileHover(undefined)}
         onMouseMove={(event) => {
+          if (isInteractionLocked) {
+            onTileHover(undefined);
+            return;
+          }
           const position = getTileFromPointer(event, metrics, cameraOffsetTiles, width, height);
           onTileHover(position);
         }}
@@ -756,6 +777,7 @@ function drawBoard(
       displayedState,
       activePresentation,
       animationClock,
+      unit.id === runtime.mainUnitId,
       isAttackTargeting,
       selectedEnemyThreatSet.has(toPositionKey(unit.position)),
       targetableEnemySet.has(toPositionKey(unit.position)),
@@ -778,6 +800,7 @@ function drawUnit(
   displayedState: DisplayedUnitState,
   activePresentation: ActivePresentation | undefined,
   animationClock: number,
+  isMainUnit: boolean,
   isAttackTargeting: boolean,
   isThreatSelectedEnemy: boolean,
   isTargetableEnemy: boolean,
@@ -840,6 +863,40 @@ function drawUnit(
   context.strokeStyle = unitStrokeColor;
   context.lineWidth = 2;
   context.stroke();
+
+  if (isMainUnit) {
+    const badgeRadius = Math.max(8, tileSize * 0.13);
+    const badgeX = centerX + bodyWidth * 0.28;
+    const badgeY = headCenterY - headRadius * 1.2;
+
+    context.fillStyle = "rgba(255, 226, 117, 0.96)";
+    context.beginPath();
+    context.arc(badgeX, badgeY, badgeRadius, 0, Math.PI * 2);
+    context.fill();
+    context.strokeStyle = "rgba(96, 60, 10, 0.92)";
+    context.lineWidth = Math.max(1.5, tileSize * 0.03);
+    context.stroke();
+
+    context.fillStyle = "rgba(84, 50, 17, 0.96)";
+    context.font = `700 ${Math.max(9, tileSize * 0.17)}px Trebuchet MS`;
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText("M", badgeX, badgeY + 0.5);
+
+    context.strokeStyle = "rgba(255, 221, 114, 0.9)";
+    context.lineWidth = Math.max(2, tileSize * 0.045);
+    context.beginPath();
+    context.ellipse(
+      centerX,
+      bodyCenterY,
+      bodyWidth * 0.8,
+      bodyHeight * 0.88,
+      0,
+      0,
+      Math.PI * 2,
+    );
+    context.stroke();
+  }
 
   if (isTargetableEnemy) {
     context.strokeStyle = isHoveredAttackTarget ? "rgba(236, 56, 46, 0.98)" : "rgba(214, 46, 36, 0.85)";

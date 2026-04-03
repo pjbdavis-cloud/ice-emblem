@@ -14,6 +14,7 @@ vi.mock("./BattleCanvas", () => ({
     onTileClick: (position: { x: number; y: number }) => void;
     onTileRightClick: (position?: { x: number; y: number }) => void;
     onTileHover: (position?: { x: number; y: number }) => void;
+    isInteractionLocked?: boolean;
     moveHighlightTiles: Array<{ x: number; y: number }>;
     attackHighlightTiles: Array<{ x: number; y: number }>;
     isAttackTargeting: boolean;
@@ -84,6 +85,7 @@ vi.mock("./BattleCanvas", () => ({
         <button type="button" onMouseEnter={() => props.onTileHover(undefined)}>
           Clear Hover
         </button>
+        <output data-testid="interaction-locked">{String(Boolean(props.isInteractionLocked))}</output>
         <output data-testid="move-highlight-tiles">
           {props.moveHighlightTiles.map((tile) => `${tile.x},${tile.y}`).join(" | ")}
         </output>
@@ -425,6 +427,59 @@ describe("BattleScreen interactions", () => {
 
     expect(screen.getByText("Aster at 1,3")).toBeInTheDocument();
     expect(screen.getByTestId("preview-move-path")).toHaveTextContent("1,4 -> 1,3");
+  });
+
+  it("shows a victory overlay with restart as the only available action", () => {
+    renderBattleScreen((runtime) => {
+      runtime.gameResult = "victory";
+      return runtime;
+    });
+
+    expect(screen.getByTestId("battle-result-overlay")).toHaveTextContent("Victory");
+    expect(screen.getByRole("button", { name: "Restart" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "End Phase" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("interaction-locked")).toHaveTextContent("true");
+  });
+
+  it("shows a defeat overlay with restart as the only available action", () => {
+    renderBattleScreen((runtime) => {
+      runtime.gameResult = "defeat";
+      return runtime;
+    });
+
+    expect(screen.getByTestId("battle-result-overlay")).toHaveTextContent("Defeat");
+    expect(screen.getByRole("button", { name: "Restart" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Select All Threat" })).not.toBeInTheDocument();
+  });
+
+  it("locks board interaction after the game ends", async () => {
+    const user = renderBattleScreen((runtime) => {
+      runtime.gameResult = "victory";
+      return runtime;
+    });
+
+    await user.click(screen.getByRole("button", { name: "Click Aster" }));
+
+    expect(screen.getByText("No unit selected.")).toBeInTheDocument();
+    expect(screen.queryByText("Aster")).not.toBeInTheDocument();
+  });
+
+  it("restarts from the existing reset behavior after the game ends", async () => {
+    const user = renderBattleScreen((runtime) => {
+      runtime.gameResult = "defeat";
+      runtime.turnNumber = 4;
+      runtime.units["player-lord"].currentHp = 0;
+      runtime.units["player-lord"].isDefeated = true;
+      return runtime;
+    });
+
+    await user.click(screen.getByRole("button", { name: "Restart" }));
+
+    expect(screen.queryByTestId("battle-result-overlay")).not.toBeInTheDocument();
+    expect(screen.getByText("Turn 1 | PLAYER PHASE")).toBeInTheDocument();
+    expect(screen.getByText("No unit selected.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "End Phase" })).toBeInTheDocument();
   });
 });
 

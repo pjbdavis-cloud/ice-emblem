@@ -27,7 +27,7 @@ describe("App routing", () => {
 
     render(<App />);
 
-    expect(screen.getByRole("heading", { name: "Aster" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Aster (Main Unit)" })).toBeInTheDocument();
     expect(screen.getAllByText("Journeyman").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Proficiencies" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Items" })).toBeInTheDocument();

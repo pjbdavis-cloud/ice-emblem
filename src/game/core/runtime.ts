@@ -1,5 +1,6 @@
 import type {
   BattleMapDefinition,
+  GameResult,
   RulesConfig,
   RuntimeGameState,
   RuntimeSnapshot,
@@ -35,19 +36,23 @@ export function createInitialRuntimeState(map: BattleMapDefinition): RuntimeGame
     }),
   );
 
+  const mainUnitId = map.units.find((unit) => unit.team === "player" && unit.isLeader)?.id;
+
   return {
     map,
     units,
     phase: "player",
     turnNumber: 1,
     rules: defaultRules,
+    gameResult: "in_progress",
+    mainUnitId,
     selectedUnitId: undefined,
     actionHistory: [],
   };
 }
 
 export function canUndo(state: RuntimeGameState): boolean {
-  return state.phase === "player" && state.actionHistory.length > 0;
+  return state.gameResult === "in_progress" && state.phase === "player" && state.actionHistory.length > 0;
 }
 
 export function undoLastAction(state: RuntimeGameState): RuntimeGameState {
@@ -110,6 +115,10 @@ export function cloneRuntimeState(state: RuntimeGameState): RuntimeGameState {
 }
 
 export function maybeAdvancePhase(state: RuntimeGameState): RuntimeGameState {
+  if (state.gameResult !== "in_progress") {
+    return state;
+  }
+
   const activeUnits = Object.values(state.units).filter(
     (unit) => unit.team === state.phase && !unit.isDefeated,
   );
@@ -119,6 +128,10 @@ export function maybeAdvancePhase(state: RuntimeGameState): RuntimeGameState {
 }
 
 export function advancePhase(state: RuntimeGameState): RuntimeGameState {
+  if (state.gameResult !== "in_progress") {
+    return state;
+  }
+
   const nextPhase = state.phase === "player" ? "enemy" : "player";
   const nextTurnNumber = nextPhase === "player" ? state.turnNumber + 1 : state.turnNumber;
 
@@ -144,5 +157,37 @@ function toSnapshot(state: RuntimeGameState): RuntimeSnapshot {
   return {
     ...cloneRuntimeState(state),
     actionHistory: [],
+  };
+}
+
+export function evaluateGameResult(state: RuntimeGameState): GameResult {
+  const mainUnit = state.mainUnitId ? state.units[state.mainUnitId] : undefined;
+  if (mainUnit?.isDefeated) {
+    return "defeat";
+  }
+
+  if (state.map.objectives.type === "route") {
+    const remainingEnemies = Object.values(state.units).some(
+      (unit) => unit.team === "enemy" && !unit.isDefeated,
+    );
+    return remainingEnemies ? "in_progress" : "victory";
+  }
+
+  if (state.map.objectives.type === "defeatBoss") {
+    const remainingBoss = Object.values(state.units).some(
+      (unit) => unit.team === "enemy" && unit.isBoss && !unit.isDefeated,
+    );
+    return remainingBoss ? "in_progress" : "victory";
+  }
+
+  return "in_progress";
+}
+
+export function applyGameResult(state: RuntimeGameState): RuntimeGameState {
+  const gameResult = evaluateGameResult(state);
+  return {
+    ...state,
+    gameResult,
+    selectedUnitId: gameResult === "in_progress" ? state.selectedUnitId : undefined,
   };
 }

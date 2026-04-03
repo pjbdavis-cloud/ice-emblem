@@ -131,7 +131,7 @@ export function calculateDamageRange(
     defender,
     isMagicAttack ? defender.stats.resistance : defender.stats.defense,
   );
-  const baseDamage = offenseStat + weapon.might + triangleBonus - guardStat;
+  const baseDamage = offenseStat + weapon.power + triangleBonus - guardStat;
   const minDamage = Math.max(0, baseDamage + Math.floor(attacker.stats.skill / 2) - weapon.complexity);
   let maxDamage = Math.max(
     minDamage,

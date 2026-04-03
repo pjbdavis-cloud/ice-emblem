@@ -18,7 +18,7 @@
 - `id`
 - `name`
 - `category`
-- `might`
+- `power`
 - `minRange`
 - `maxRange`
 - `requiredRank`

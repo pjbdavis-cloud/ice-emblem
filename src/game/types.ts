@@ -19,6 +19,7 @@ export type TerrainType = "plain" | "forest" | "fort" | "wall";
 export type ObjectiveType = "route" | "defeatBoss";
 
 export type GameMode = "classic" | "casual";
+export type GameResult = "in_progress" | "victory" | "defeat";
 
 export type UnitBehavior = "hold_position" | "aggressive" | "triggered_aggressive";
 
@@ -74,7 +75,7 @@ export type WeaponDefinition = {
   id: string;
   name: string;
   category: WeaponDiscipline;
-  might: number;
+  power: number;
   complexity: number;
   minRange: 1 | 2;
   maxRange: 1 | 2;
@@ -118,6 +119,8 @@ export type RuntimeGameState = {
   phase: Phase;
   turnNumber: number;
   rules: RulesConfig;
+  gameResult: GameResult;
+  mainUnitId?: string;
   selectedUnitId?: string;
   actionHistory: RuntimeSnapshot[];
 };

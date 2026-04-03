@@ -168,6 +168,8 @@ export function GameInfoPage({ pathname, navigate }: GameInfoPageProps) {
 }
 
 function OverviewSection() {
+  const mainUnit = demoMap.units.find((unit) => unit.isLeader && unit.team === "player");
+
   return (
     <>
       <section className="wiki-card">
@@ -195,6 +197,14 @@ function OverviewSection() {
               {demoMap.width} x {demoMap.height}
             </strong>
           </div>
+          <div>
+            <span className="wiki-overview-label">Objective</span>
+            <strong>{formatObjectiveType(demoMap.objectives.type)}</strong>
+          </div>
+          <div>
+            <span className="wiki-overview-label">Main Unit</span>
+            <strong>{mainUnit?.name ?? "None"}</strong>
+          </div>
         </div>
       </section>
 
@@ -203,8 +213,9 @@ function OverviewSection() {
         <ul className="wiki-overview-list">
           <li>Characters: unit roster, stats, class, inventory, and proficiencies.</li>
           <li>Classes: movement, learnable disciplines, base stats, growth rates, and stat caps.</li>
-          <li>Weapons: might, complexity, range, category, and required rank.</li>
+          <li>Weapons: power, complexity, range, category, and required rank.</li>
           <li>Detail pages: click any character, class, or weapon name to inspect it directly.</li>
+          <li>Current map rule: route all enemies while protecting the main unit.</li>
         </ul>
       </section>
     </>
@@ -258,6 +269,7 @@ function CharactersTable({
                     >
                       {unit.name}
                     </button>
+                    {unit.isLeader ? " (Main)" : ""}
                   </td>
                   <td>{formatTeam(unit.team)}</td>
                   <td>{classData?.name ?? unit.classId}</td>
@@ -361,7 +373,7 @@ function WeaponsTable({
             <tr>
               <th>Name</th>
               <th>Category</th>
-              <th>Might</th>
+              <th>Power</th>
               <th>Complexity</th>
               <th>Range</th>
               <th>Required Rank</th>
@@ -381,7 +393,7 @@ function WeaponsTable({
                   </button>
                 </td>
                 <td>{formatDiscipline(weapon.category)}</td>
-                <td>{weapon.might}</td>
+                <td>{weapon.power}</td>
                 <td>{weapon.complexity}</td>
                 <td>
                   {weapon.minRange === weapon.maxRange
@@ -424,7 +436,7 @@ function CharacterDetailCard({
       <div className="wiki-detail-header">
         <div>
           <p className="eyebrow">Character</p>
-          <h2>{unit.name}</h2>
+          <h2>{unit.name}{unit.isLeader ? " (Main Unit)" : ""}</h2>
         </div>
         <div className="wiki-detail-meta">
           <span>{formatTeam(unit.team)}</span>
@@ -558,8 +570,8 @@ function WeaponDetailCard({
       </div>
       <div className="wiki-detail-grid">
         <div>
-          <h3>Might</h3>
-          <p>{weapon.might}</p>
+          <h3>Power</h3>
+          <p>{weapon.power}</p>
         </div>
         <div>
           <h3>Complexity</h3>
@@ -639,6 +651,14 @@ function formatTeam(team: UnitDefinition["team"]) {
     return "Ally";
   }
   return "Enemy";
+}
+
+function formatObjectiveType(objectiveType: "route" | "defeatBoss") {
+  if (objectiveType === "route") {
+    return "Route";
+  }
+
+  return "Defeat Boss";
 }
 
 function formatDiscipline(value: string) {

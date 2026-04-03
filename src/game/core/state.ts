@@ -20,10 +20,12 @@ import {
 } from "./movement";
 import {
   advancePhase,
+  applyGameResult,
   canUndo,
   cloneRuntimeState,
   commitState,
   createInitialRuntimeState,
+  evaluateGameResult,
   maybeAdvancePhase,
   undoLastAction,
 } from "./runtime";
@@ -33,8 +35,10 @@ const MOVE_TO_ATTACK_PAUSE_MS = 360;
 
 export {
   advancePhase,
+  applyGameResult,
   canUndo,
   createInitialRuntimeState,
+  evaluateGameResult,
   getAttackReachPreviewPositions,
   getManhattanDistance,
   getMovementPathPreview,
@@ -48,6 +52,10 @@ export {
 };
 
 export function applyAction(state: RuntimeGameState, action: GameAction): RuntimeGameState {
+  if (state.gameResult !== "in_progress") {
+    return state;
+  }
+
   switch (action.type) {
     case "selectUnit":
       if (action.unitId) {
@@ -111,7 +119,7 @@ export function processNextEnemyAction(state: RuntimeGameState): RuntimeGameStat
 export function previewNextEnemyAction(
   state: RuntimeGameState,
 ): { nextState: RuntimeGameState; presentationEvents: PresentationEvent[] } {
-  if (state.phase !== "enemy") {
+  if (state.phase !== "enemy" || state.gameResult !== "in_progress") {
     return { nextState: state, presentationEvents: [] };
   }
 
@@ -399,7 +407,8 @@ function resolveAttackInState(
   nextAttacker.hasMoved = true;
   nextAttacker.hasActed = true;
   nextState.selectedUnitId = undefined;
-  return maybeAdvancePhase(nextState);
+  const resolvedState = applyGameResult(nextState);
+  return resolvedState.gameResult === "in_progress" ? maybeAdvancePhase(resolvedState) : resolvedState;
 }
 
 function resolveWait(state: RuntimeGameState, unitId: string): RuntimeGameState {
@@ -412,7 +421,7 @@ function resolveWait(state: RuntimeGameState, unitId: string): RuntimeGameState 
   unit.hasMoved = true;
   unit.hasActed = true;
   nextState.selectedUnitId = undefined;
-  return nextState;
+  return applyGameResult(nextState);
 }
 
 function createMovePresentationEvents(
