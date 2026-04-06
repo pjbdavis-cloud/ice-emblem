@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { getEquippedWeapon } from "../../game/combat/preview";
 import type { Position, RuntimeGameState, Team, TileDefinition, UnitState } from "../../game/types";
 import type { PresentationEvent } from "../presentation/types";
 
@@ -955,16 +956,113 @@ function drawUnit(
   context.strokeStyle = unitAccentColor;
   context.lineWidth = Math.max(1.5, tileSize * 0.03);
   context.beginPath();
-  context.moveTo(centerX, bodyCenterY - bodyHeight * 0.18);
-  context.lineTo(centerX, bodyCenterY + bodyHeight * 0.28);
-  context.moveTo(centerX - bodyWidth * 0.18, bodyCenterY);
-  context.lineTo(centerX + bodyWidth * 0.18, bodyCenterY);
-  context.moveTo(centerX, bodyCenterY + bodyHeight * 0.26);
-  context.lineTo(centerX - bodyWidth * 0.14, bodyCenterY + bodyHeight * 0.56);
-  context.moveTo(centerX, bodyCenterY + bodyHeight * 0.26);
-  context.lineTo(centerX + bodyWidth * 0.14, bodyCenterY + bodyHeight * 0.56);
+  drawUnitFamilyGlyph(context, runtime, unit, centerX, bodyCenterY, bodyWidth, bodyHeight);
   context.stroke();
   context.restore();
+}
+
+function drawUnitFamilyGlyph(
+  context: CanvasRenderingContext2D,
+  runtime: RuntimeGameState,
+  unit: UnitState,
+  centerX: number,
+  bodyCenterY: number,
+  bodyWidth: number,
+  bodyHeight: number,
+) {
+  const equippedWeapon = getEquippedWeapon(runtime, unit);
+  const category = equippedWeapon?.category;
+
+  switch (category) {
+    case "sword":
+      context.moveTo(centerX, bodyCenterY - bodyHeight * 0.2);
+      context.lineTo(centerX, bodyCenterY + bodyHeight * 0.22);
+      context.moveTo(centerX - bodyWidth * 0.12, bodyCenterY - bodyHeight * 0.02);
+      context.lineTo(centerX + bodyWidth * 0.12, bodyCenterY - bodyHeight * 0.02);
+      context.moveTo(centerX, bodyCenterY + bodyHeight * 0.22);
+      context.lineTo(centerX - bodyWidth * 0.08, bodyCenterY + bodyHeight * 0.34);
+      context.moveTo(centerX, bodyCenterY + bodyHeight * 0.22);
+      context.lineTo(centerX + bodyWidth * 0.08, bodyCenterY + bodyHeight * 0.34);
+      break;
+    case "axe":
+      context.moveTo(centerX - bodyWidth * 0.05, bodyCenterY - bodyHeight * 0.22);
+      context.lineTo(centerX + bodyWidth * 0.03, bodyCenterY + bodyHeight * 0.24);
+      context.moveTo(centerX - bodyWidth * 0.04, bodyCenterY - bodyHeight * 0.16);
+      context.lineTo(centerX + bodyWidth * 0.18, bodyCenterY - bodyHeight * 0.08);
+      context.lineTo(centerX + bodyWidth * 0.14, bodyCenterY + bodyHeight * 0.06);
+      context.lineTo(centerX - bodyWidth * 0.01, bodyCenterY + bodyHeight * 0.02);
+      break;
+    case "lance":
+      context.moveTo(centerX, bodyCenterY + bodyHeight * 0.28);
+      context.lineTo(centerX, bodyCenterY - bodyHeight * 0.18);
+      context.moveTo(centerX, bodyCenterY - bodyHeight * 0.24);
+      context.lineTo(centerX - bodyWidth * 0.08, bodyCenterY - bodyHeight * 0.08);
+      context.lineTo(centerX + bodyWidth * 0.08, bodyCenterY - bodyHeight * 0.08);
+      context.lineTo(centerX, bodyCenterY - bodyHeight * 0.24);
+      break;
+    case "bow":
+      context.save();
+      context.beginPath();
+      context.ellipse(
+        centerX - bodyWidth * 0.02,
+        bodyCenterY,
+        bodyWidth * 0.14,
+        bodyHeight * 0.3,
+        0,
+        -Math.PI / 2,
+        Math.PI / 2,
+      );
+      context.stroke();
+      context.restore();
+      context.moveTo(centerX + bodyWidth * 0.08, bodyCenterY - bodyHeight * 0.26);
+      context.lineTo(centerX + bodyWidth * 0.08, bodyCenterY + bodyHeight * 0.26);
+      context.moveTo(centerX - bodyWidth * 0.08, bodyCenterY - bodyHeight * 0.08);
+      context.lineTo(centerX + bodyWidth * 0.08, bodyCenterY);
+      context.lineTo(centerX - bodyWidth * 0.08, bodyCenterY + bodyHeight * 0.08);
+      break;
+    case "elemental_magic":
+      context.moveTo(centerX, bodyCenterY - bodyHeight * 0.24);
+      context.lineTo(centerX + bodyWidth * 0.08, bodyCenterY - bodyHeight * 0.04);
+      context.lineTo(centerX + bodyWidth * 0.02, bodyCenterY - bodyHeight * 0.04);
+      context.lineTo(centerX + bodyWidth * 0.12, bodyCenterY + bodyHeight * 0.2);
+      context.lineTo(centerX - bodyWidth * 0.06, bodyCenterY + bodyHeight * 0.02);
+      context.lineTo(centerX, bodyCenterY + bodyHeight * 0.02);
+      context.lineTo(centerX - bodyWidth * 0.08, bodyCenterY - bodyHeight * 0.24);
+      break;
+    case "light_magic":
+      context.moveTo(centerX, bodyCenterY - bodyHeight * 0.22);
+      context.lineTo(centerX, bodyCenterY + bodyHeight * 0.18);
+      context.moveTo(centerX - bodyWidth * 0.16, bodyCenterY);
+      context.lineTo(centerX + bodyWidth * 0.16, bodyCenterY);
+      context.moveTo(centerX - bodyWidth * 0.11, bodyCenterY - bodyHeight * 0.13);
+      context.lineTo(centerX + bodyWidth * 0.11, bodyCenterY + bodyHeight * 0.13);
+      context.moveTo(centerX + bodyWidth * 0.11, bodyCenterY - bodyHeight * 0.13);
+      context.lineTo(centerX - bodyWidth * 0.11, bodyCenterY + bodyHeight * 0.13);
+      break;
+    case "dark_magic":
+      context.moveTo(centerX - bodyWidth * 0.14, bodyCenterY + bodyHeight * 0.12);
+      context.lineTo(centerX, bodyCenterY - bodyHeight * 0.22);
+      context.lineTo(centerX + bodyWidth * 0.14, bodyCenterY + bodyHeight * 0.12);
+      context.moveTo(centerX - bodyWidth * 0.08, bodyCenterY + bodyHeight * 0.14);
+      context.lineTo(centerX + bodyWidth * 0.08, bodyCenterY + bodyHeight * 0.14);
+      break;
+    case "healing":
+      context.moveTo(centerX, bodyCenterY - bodyHeight * 0.2);
+      context.lineTo(centerX, bodyCenterY + bodyHeight * 0.2);
+      context.moveTo(centerX - bodyWidth * 0.16, bodyCenterY);
+      context.lineTo(centerX + bodyWidth * 0.16, bodyCenterY);
+      break;
+    default:
+      context.moveTo(centerX, bodyCenterY - bodyHeight * 0.18);
+      context.lineTo(centerX, bodyCenterY + bodyHeight * 0.28);
+      context.moveTo(centerX - bodyWidth * 0.18, bodyCenterY);
+      context.lineTo(centerX + bodyWidth * 0.18, bodyCenterY);
+      context.moveTo(centerX, bodyCenterY + bodyHeight * 0.26);
+      context.lineTo(centerX - bodyWidth * 0.14, bodyCenterY + bodyHeight * 0.56);
+      context.moveTo(centerX, bodyCenterY + bodyHeight * 0.26);
+      context.lineTo(centerX + bodyWidth * 0.14, bodyCenterY + bodyHeight * 0.56);
+      break;
+  }
 }
 
 function getDisplayedUnitState(
