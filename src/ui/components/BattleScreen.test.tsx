@@ -1,4 +1,4 @@
-import { act, useEffect } from "react";
+import { act, forwardRef, useEffect, useImperativeHandle, type ForwardedRef } from "react";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
 import { fireEvent, render, screen, within } from "@testing-library/react";
@@ -10,32 +10,76 @@ import { gameReducer } from "../../app/slices/gameSlice";
 import { BattleScreen } from "./BattleScreen";
 
 vi.mock("./BattleCanvas", () => ({
-  BattleCanvas: (props: {
-    onTileClick: (position: { x: number; y: number }) => void;
-    onTileRightClick: (position?: { x: number; y: number }) => void;
-    onTileHover: (position?: { x: number; y: number }) => void;
-    isInteractionLocked?: boolean;
-    moveHighlightTiles: Array<{ x: number; y: number }>;
-    attackHighlightTiles: Array<{ x: number; y: number }>;
-    isAttackTargeting: boolean;
-    targetableEnemyTiles: Array<{ x: number; y: number }>;
-    hoveredAttackTargetTile?: { x: number; y: number };
-    selectedEnemyThreatTiles: Array<{ x: number; y: number }>;
-    enemyThreatOutlineTiles: Array<{ x: number; y: number }>;
-    hoveredMovePath: Array<{ x: number; y: number }>;
-    previewMove?: { unitId: string; path: Array<{ x: number; y: number }>; destination: { x: number; y: number } };
-    onPreviewMoveComplete?: () => void;
-  }) => {
+  CAMERA_VIEWPORT_PRESETS: [
+    { label: "15x20", rows: 15, columns: 20 },
+    { label: "12x16", rows: 12, columns: 16 },
+    { label: "9x12", rows: 9, columns: 12 },
+  ],
+  BattleCanvas: forwardRef(function BattleCanvas(
+    props: {
+      onTileClick: (position: { x: number; y: number }) => void;
+      onTileRightClick: (position?: { x: number; y: number }) => void;
+      onTileHover: (position?: { x: number; y: number }) => void;
+      isInteractionLocked?: boolean;
+      viewportPresetIndex: number;
+      onViewportPresetIndexChange?: (nextIndex: number) => void;
+      onViewportChange?: (viewport: {
+        offsetX: number;
+        offsetY: number;
+        visibleColumns: number;
+        visibleRows: number;
+      }) => void;
+      moveHighlightTiles: Array<{ x: number; y: number }>;
+      attackHighlightTiles: Array<{ x: number; y: number }>;
+      healHighlightTiles: Array<{ x: number; y: number }>;
+      isAttackTargeting: boolean;
+      isHealTargeting: boolean;
+      targetableEnemyTiles: Array<{ x: number; y: number }>;
+      targetableAllyTiles: Array<{ x: number; y: number }>;
+      hoveredAttackTargetTile?: { x: number; y: number };
+      hoveredHealTargetTile?: { x: number; y: number };
+      selectedEnemyThreatTiles: Array<{ x: number; y: number }>;
+      enemyThreatOutlineTiles: Array<{ x: number; y: number }>;
+      hoveredMovePath: Array<{ x: number; y: number }>;
+      previewMove?: { unitId: string; path: Array<{ x: number; y: number }>; destination: { x: number; y: number } };
+      onPreviewMoveComplete?: () => void;
+    },
+    ref: ForwardedRef<{ zoomIn: () => void; zoomOut: () => void }>,
+  ) {
+    useImperativeHandle(
+      ref,
+      () => ({
+        zoomIn: () => props.onViewportPresetIndexChange?.(Math.min(2, props.viewportPresetIndex + 1)),
+        zoomOut: () => props.onViewportPresetIndexChange?.(Math.max(0, props.viewportPresetIndex - 1)),
+      }),
+      [props.onViewportPresetIndexChange, props.viewportPresetIndex],
+    );
+
     useEffect(() => {
       if (props.previewMove) {
         props.onPreviewMoveComplete?.();
       }
     }, [props.onPreviewMoveComplete, props.previewMove]);
 
+    useEffect(() => {
+      props.onViewportChange?.({
+        offsetX: 0,
+        offsetY: 0,
+        visibleColumns: 20,
+        visibleRows: 15,
+      });
+    }, [props.onViewportChange]);
+
     return (
       <div data-testid="mock-battle-canvas">
         <button type="button" onClick={() => props.onTileClick({ x: 1, y: 4 })}>
           Click Aster
+        </button>
+        <button type="button" onClick={() => props.onTileClick({ x: 2, y: 8 })}>
+          Click Liora
+        </button>
+        <button type="button" onClick={() => props.onTileClick({ x: 1, y: 7 })}>
+          Click Bran
         </button>
         <button type="button" onClick={() => props.onTileClick({ x: 2, y: 5 })}>
           Click Mira
@@ -60,6 +104,9 @@ vi.mock("./BattleCanvas", () => ({
         </button>
         <button type="button" onMouseEnter={() => props.onTileHover({ x: 5, y: 1 })}>
           Hover Bandit
+        </button>
+        <button type="button" onMouseEnter={() => props.onTileHover({ x: 1, y: 7 })}>
+          Hover Bran
         </button>
         <button type="button" onMouseEnter={() => props.onTileHover({ x: 2, y: 4 })}>
           Hover Right One
@@ -86,6 +133,7 @@ vi.mock("./BattleCanvas", () => ({
           Clear Hover
         </button>
         <output data-testid="interaction-locked">{String(Boolean(props.isInteractionLocked))}</output>
+        <output data-testid="viewport-preset-index">{props.viewportPresetIndex}</output>
         <output data-testid="move-highlight-tiles">
           {props.moveHighlightTiles.map((tile) => `${tile.x},${tile.y}`).join(" | ")}
         </output>
@@ -98,11 +146,20 @@ vi.mock("./BattleCanvas", () => ({
         <output data-testid="attack-highlight-tiles">
           {props.attackHighlightTiles.map((tile) => `${tile.x},${tile.y}`).join(" | ")}
         </output>
+        <output data-testid="heal-highlight-tiles">
+          {props.healHighlightTiles.map((tile) => `${tile.x},${tile.y}`).join(" | ")}
+        </output>
         <output data-testid="targetable-enemy-tiles">
           {props.targetableEnemyTiles.map((tile) => `${tile.x},${tile.y}`).join(" | ")}
         </output>
+        <output data-testid="targetable-ally-tiles">
+          {props.targetableAllyTiles.map((tile) => `${tile.x},${tile.y}`).join(" | ")}
+        </output>
         <output data-testid="hovered-attack-target-tile">
           {props.hoveredAttackTargetTile ? `${props.hoveredAttackTargetTile.x},${props.hoveredAttackTargetTile.y}` : ""}
+        </output>
+        <output data-testid="hovered-heal-target-tile">
+          {props.hoveredHealTargetTile ? `${props.hoveredHealTargetTile.x},${props.hoveredHealTargetTile.y}` : ""}
         </output>
         <output data-testid="selected-enemy-threat-tiles">
           {props.selectedEnemyThreatTiles.map((tile) => `${tile.x},${tile.y}`).join(" | ")}
@@ -112,7 +169,7 @@ vi.mock("./BattleCanvas", () => ({
         </output>
       </div>
     );
-  },
+  }),
 }));
 
 describe("BattleScreen interactions", () => {
@@ -320,9 +377,30 @@ describe("BattleScreen interactions", () => {
     await user.click(screen.getByRole("button", { name: "Click Aster" }));
 
     expect(screen.getByText("Journeyman")).toBeInTheDocument();
-    expect(screen.getByText("Sword E")).toBeInTheDocument();
+    expect(screen.getByText("Sword E 0%")).toBeInTheDocument();
     expect(screen.getByText("Iron Sword")).toBeInTheDocument();
     expect(screen.getByText("Equipped")).toBeInTheDocument();
+    expect(screen.getByText("EXP: 0%")).toBeInTheDocument();
+  });
+
+  it("creates a manual save and can load it back from the load dialog", async () => {
+    const user = renderBattleScreen();
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByText("Saved Demo Route Skirmish - Turn 1 - Player Phase")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Click Aster" }));
+    expect(screen.getByText("Aster")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Load" }));
+    const loadDialog = screen.getByRole("heading", { name: "Load Saved Game" }).closest("section");
+    expect(loadDialog).not.toBeNull();
+
+    await user.click(within(loadDialog as HTMLElement).getAllByRole("button", { name: "Load" })[0]);
+
+    expect(screen.queryByRole("heading", { name: "Load Saved Game" })).not.toBeInTheDocument();
+    expect(screen.getByText("Loaded Demo Route Skirmish - Turn 1 - Player Phase")).toBeInTheDocument();
+    expect(screen.getByText("No unit selected.")).toBeInTheDocument();
   });
 
   it("shows hover unit class, proficiencies, and items", async () => {
@@ -331,9 +409,32 @@ describe("BattleScreen interactions", () => {
     await user.hover(screen.getByRole("button", { name: "Hover Bandit" }));
 
     expect(screen.getByText("Sailor")).toBeInTheDocument();
-    expect(screen.getByText("Axe E")).toBeInTheDocument();
+    expect(screen.getByText("Axe E 0%")).toBeInTheDocument();
     expect(screen.getByText("Iron Axe")).toBeInTheDocument();
     expect(screen.getByText("Equipped")).toBeInTheDocument();
+  });
+
+  it("shows heal targeting and heals an allied unit with staff experience gain", async () => {
+    const user = renderBattleScreen((runtime) => {
+      runtime.units["player-fighter"].currentHp = 18;
+      return runtime;
+    });
+
+    await user.click(screen.getByRole("button", { name: "Click Liora" }));
+    await user.click(screen.getByRole("button", { name: "Click Liora" }));
+
+    expect(screen.getByRole("button", { name: "Heal" })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Heal" }));
+
+    expect(screen.getByText("Select a target to heal.")).toBeInTheDocument();
+    expect(screen.getByTestId("targetable-ally-tiles")).toHaveTextContent("1,7");
+
+    await user.click(screen.getByRole("button", { name: "Click Bran" }));
+    await user.hover(screen.getByRole("button", { name: "Hover Bran" }));
+
+    expect(screen.queryByText("Select a target to heal.")).not.toBeInTheDocument();
+    expect(screen.getByText("Bran")).toBeInTheDocument();
   });
 
   it("does not show movement or attack previews for a friendly unit that has already acted", async () => {
@@ -429,6 +530,20 @@ describe("BattleScreen interactions", () => {
     expect(screen.getByTestId("preview-move-path")).toHaveTextContent("1,4 -> 1,3");
   });
 
+  it("renders map tools in the sidebar and updates the zoom label", async () => {
+    const user = renderBattleScreen();
+
+    expect(screen.getByTestId("map-tools-card")).toBeInTheDocument();
+    expect(screen.getByTestId("battle-minimap")).toBeInTheDocument();
+    expect(screen.getByText("15x20")).toBeInTheDocument();
+    expect(screen.getByTestId("viewport-preset-index")).toHaveTextContent("0");
+
+    await user.click(screen.getByRole("button", { name: "Zoom in" }));
+
+    expect(screen.getByText("12x16")).toBeInTheDocument();
+    expect(screen.getByTestId("viewport-preset-index")).toHaveTextContent("1");
+  });
+
   it("shows a victory overlay with restart as the only available action", () => {
     renderBattleScreen((runtime) => {
       runtime.gameResult = "victory";
@@ -477,7 +592,7 @@ describe("BattleScreen interactions", () => {
     await user.click(screen.getByRole("button", { name: "Restart" }));
 
     expect(screen.queryByTestId("battle-result-overlay")).not.toBeInTheDocument();
-    expect(screen.getByText("Turn 1 | PLAYER PHASE")).toBeInTheDocument();
+    expect(screen.getByText(/Turn 1 \| PLAYER PHASE \| Objective: Route all enemies/)).toBeInTheDocument();
     expect(screen.getByText("No unit selected.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "End Phase" })).toBeInTheDocument();
   });

@@ -12,7 +12,7 @@ export type WeaponDiscipline =
   | "elemental_magic"
   | "light_magic"
   | "dark_magic"
-  | "healing";
+  | "staff";
 
 export type TerrainType = "plain" | "forest" | "fort" | "wall";
 
@@ -39,6 +39,8 @@ export type Stats = {
 };
 
 export type GrowthRates = Record<keyof Stats, number>;
+export type GrowthBonuses = Partial<Record<keyof Stats, number>>;
+export type WeaponProficiencyExperience = Partial<Record<WeaponDiscipline, number>>;
 
 export type UnitDefinition = {
   id: string;
@@ -46,6 +48,7 @@ export type UnitDefinition = {
   classId: string;
   team: Team;
   level: number;
+  experience: number;
   tier: 1 | 2;
   stats: Stats;
   currentHp: number;
@@ -53,6 +56,8 @@ export type UnitDefinition = {
   inventory: string[];
   equippedWeaponId: string;
   weaponProficiencies: Partial<Record<WeaponDiscipline, WeaponRank>>;
+  weaponProficiencyExperience?: WeaponProficiencyExperience;
+  growthBonuses?: GrowthBonuses;
   personalSkillId?: string;
   classSkillId?: string;
   behavior?: UnitBehavior;
@@ -133,6 +138,7 @@ export type GameAction =
   | { type: "selectUnit"; unitId?: string }
   | { type: "moveUnit"; unitId: string; destination: Position }
   | { type: "attackUnit"; attackerId: string; defenderId: string }
+  | { type: "healUnit"; healerId: string; targetId: string }
   | { type: "waitUnit"; unitId: string }
   | { type: "endPhase" };
 

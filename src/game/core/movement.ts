@@ -85,7 +85,7 @@ export function getMovementPreviewPositions(state: RuntimeGameState, unitId: str
 export function getAttackReachPreviewPositions(state: RuntimeGameState, unitId: string): Position[] {
   const unit = state.units[unitId];
   const weapon = unit ? getEquippedWeapon(state, unit) : undefined;
-  if (!unit || !weapon || unit.isDefeated) {
+  if (!unit || !weapon || unit.isDefeated || weapon.category === "staff") {
     return [];
   }
 
@@ -127,7 +127,7 @@ export function getAttackReachPreviewPositions(state: RuntimeGameState, unitId: 
 export function getThreatenedPositions(state: RuntimeGameState, unitId: string): Position[] {
   const unit = state.units[unitId];
   const weapon = unit ? getEquippedWeapon(state, unit) : undefined;
-  if (!unit || !weapon || unit.isDefeated) {
+  if (!unit || !weapon || unit.isDefeated || weapon.category === "staff") {
     return [];
   }
 
@@ -154,6 +154,48 @@ export function getThreatenedPositions(state: RuntimeGameState, unitId: string):
   }
 
   return Array.from(threatenedPositions.values()).sort(sortPositions);
+}
+
+export function getSupportReachPreviewPositions(state: RuntimeGameState, unitId: string): Position[] {
+  const unit = state.units[unitId];
+  const weapon = unit ? getEquippedWeapon(state, unit) : undefined;
+  if (!unit || !weapon || unit.isDefeated || weapon.category !== "staff") {
+    return [];
+  }
+
+  const movePositions = getMovementPreviewPositions(state, unitId);
+  const supportPositions = new Map<string, Position>();
+  const blockedPositions = new Set<string>([
+    toPositionKey(unit.position),
+    ...movePositions.map(toPositionKey),
+  ]);
+  const origins = [unit.position, ...movePositions];
+
+  for (const origin of origins) {
+    for (let dx = -weapon.maxRange; dx <= weapon.maxRange; dx += 1) {
+      for (let dy = -weapon.maxRange; dy <= weapon.maxRange; dy += 1) {
+        const distance = Math.abs(dx) + Math.abs(dy);
+        if (distance < weapon.minRange || distance > weapon.maxRange) {
+          continue;
+        }
+
+        const position = { x: origin.x + dx, y: origin.y + dy };
+        if (!isPositionInBounds(state, position)) {
+          continue;
+        }
+
+        const occupant = getUnitAtPosition(state, position);
+        const key = toPositionKey(position);
+        if (blockedPositions.has(key) && !occupant) {
+          continue;
+        }
+
+        supportPositions.set(key, position);
+      }
+    }
+  }
+
+  return Array.from(supportPositions.values()).sort(sortPositions);
 }
 
 export function isUnitInjured(state: RuntimeGameState, unit: UnitState): boolean {

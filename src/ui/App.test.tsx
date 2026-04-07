@@ -33,6 +33,6 @@ describe("App routing", () => {
     expect(screen.getByRole("heading", { name: "Items" })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Iron Sword" }).length).toBeGreaterThan(0);
     expect(screen.getByText("Equipped")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Journeyman" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Journeyman" }).length).toBeGreaterThan(0);
   });
 });

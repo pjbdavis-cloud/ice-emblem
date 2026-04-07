@@ -141,6 +141,28 @@ test("a defeated unit no longer appears on the board after lethal combat resolve
   await expectSectionToContain(page, "Hover", "Tile: 3,1");
 });
 
+test("renders map tools with zoom controls and minimap in the sidebar", async ({ page }) => {
+  await expect(page.getByTestId("map-tools-card")).toBeVisible();
+  await expect(page.getByTestId("battle-minimap")).toBeVisible();
+  await expect(page.locator(".battle-canvas-shell button[aria-label='Zoom in']")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Zoom in" }).click();
+  await expect(page.getByText("12x16")).toBeVisible();
+});
+
+test("wheel zoom keeps the hovered tile stable", async ({ page }) => {
+  await hoverTile(page, 9, 10);
+  await expectSectionToContain(page, "Hover", "Tile: 9,10");
+
+  await page.mouse.wheel(0, -120);
+  await expect(page.getByText("12x16")).toBeVisible();
+  await expectSectionToContain(page, "Hover", "Tile: 9,10");
+
+  await page.mouse.wheel(0, 120);
+  await expect(page.getByText("15x20")).toBeVisible();
+  await expectSectionToContain(page, "Hover", "Tile: 9,10");
+});
+
 test("shows a victory overlay and restart after the battle ends", async ({ page }) => {
   await setGameResult(page, "victory");
 

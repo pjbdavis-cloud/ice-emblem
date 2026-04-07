@@ -1,4 +1,4 @@
-import { canUnitStrikeTarget, getCombatPreview, rollDamageRange } from "../combat/preview";
+import { canUnitStrikeTarget, getCombatPreview, getEquippedWeapon, rollDamageRange } from "../combat/preview";
 import type {
   GameAction,
   Position,
@@ -13,6 +13,7 @@ import {
   getMovementPathPreview,
   getMovementPreviewPositions,
   getReachablePositions,
+  getSupportReachPreviewPositions,
   getThreatenedPositions,
   getUnitMovement,
   getUnitAtPosition,
@@ -29,7 +30,8 @@ import {
   maybeAdvancePhase,
   undoLastAction,
 } from "./runtime";
-export { levelUpUnit } from "./progression";
+export { awardCombatRewards, awardStaffUseRewards, getUnitGrowthRates, levelUpUnit } from "./progression";
+import { awardCombatRewards, awardStaffUseRewards } from "./progression";
 
 const MOVE_TO_ATTACK_PAUSE_MS = 360;
 
@@ -44,6 +46,7 @@ export {
   getMovementPathPreview,
   getMovementPreviewPositions,
   getReachablePositions,
+  getSupportReachPreviewPositions,
   getThreatenedPositions,
   getUnitMovement,
   getUnitAtPosition,
@@ -93,6 +96,8 @@ export function applyAction(state: RuntimeGameState, action: GameAction): Runtim
       });
     case "attackUnit":
       return commitState(state, (draft) => resolveAttackInState(draft, action.attackerId, action.defenderId));
+    case "healUnit":
+      return commitState(state, (draft) => resolveHealInState(draft, action.healerId, action.targetId));
     case "waitUnit":
       return commitState(state, (draft) => {
         const unit = draft.units[action.unitId];
@@ -151,14 +156,19 @@ export function previewNextEnemyAction(
 
 export function buildPlayerActionPresentation(
   previousState: RuntimeGameState,
-  action: Extract<GameAction, { type: "attackUnit" | "waitUnit" }>,
+  action: Extract<GameAction, { type: "attackUnit" | "healUnit" | "waitUnit" }>,
   stagedDestination?: Position,
 ): { nextState: RuntimeGameState; presentationEvents: PresentationEvent[] } {
   const presentationEvents: PresentationEvent[] = [];
   let nextState = previousState;
 
   if (stagedDestination) {
-    const unitId = action.type === "attackUnit" ? action.attackerId : action.unitId;
+    const unitId =
+      action.type === "attackUnit"
+        ? action.attackerId
+        : action.type === "healUnit"
+          ? action.healerId
+          : action.unitId;
     const movedState = applyAction(nextState, {
       type: "moveUnit",
       unitId,
@@ -188,6 +198,8 @@ export function buildPlayerActionPresentation(
       });
     }
     nextState = resolvedCombat;
+  } else if (action.type === "healUnit") {
+    nextState = applyAction(nextState, action);
   } else {
     nextState = applyAction(nextState, action);
   }
@@ -203,6 +215,18 @@ export function getUnitAttackOptions(state: RuntimeGameState, unitId: string): U
   return Object.values(state.units)
     .filter((candidate) => candidate.team !== unit.team && !candidate.isDefeated)
     .filter((candidate) => canUnitAttackTarget(state, unitId, candidate.id));
+}
+
+export function getUnitHealOptions(state: RuntimeGameState, unitId: string): UnitState[] {
+  const unit = state.units[unitId];
+  if (!unit || unit.isDefeated || unit.hasActed) {
+    return [];
+  }
+
+  return Object.values(state.units)
+    .filter((candidate) => candidate.team === unit.team && candidate.id !== unit.id && !candidate.isDefeated)
+    .filter((candidate) => candidate.currentHp < candidate.stats.maxHp)
+    .filter((candidate) => canUnitHealTarget(state, unitId, candidate.id));
 }
 
 export function canUnitAttackTarget(
@@ -224,6 +248,33 @@ export function canUnitAttackTarget(
   }
 
   return canUnitStrikeTarget(state, attacker, defender);
+}
+
+export function canUnitHealTarget(
+  state: RuntimeGameState,
+  healerId: string,
+  targetId: string,
+): boolean {
+  const healer = state.units[healerId];
+  const target = state.units[targetId];
+  const weapon = healer ? getEquippedWeapon(state, healer) : undefined;
+  if (
+    !healer ||
+    !target ||
+    !weapon ||
+    weapon.category !== "staff" ||
+    healer.isDefeated ||
+    target.isDefeated ||
+    healer.hasActed ||
+    healer.team !== target.team ||
+    healerId === targetId ||
+    target.currentHp >= target.stats.maxHp
+  ) {
+    return false;
+  }
+
+  const distance = getManhattanDistance(healer.position, target.position);
+  return distance >= weapon.minRange && distance <= weapon.maxRange;
 }
 
 function executeEnemyTurnWithPresentation(
@@ -404,10 +455,70 @@ function resolveAttackInState(
     }
   }
 
-  nextAttacker.hasMoved = true;
-  nextAttacker.hasActed = true;
-  nextState.selectedUnitId = undefined;
-  const resolvedState = applyGameResult(nextState);
+  let rewardedState = nextState;
+  if (!rewardedState.units[attackerId]?.isDefeated) {
+    rewardedState = awardCombatRewards(rewardedState, attackerId, {
+      defeatedTarget: Boolean(rewardedState.units[defenderId]?.isDefeated),
+    });
+  }
+  if (!rewardedState.units[defenderId]?.isDefeated) {
+    rewardedState = awardCombatRewards(rewardedState, defenderId, {
+      defeatedTarget: Boolean(rewardedState.units[attackerId]?.isDefeated),
+    });
+  }
+
+  const rewardedAttacker = rewardedState.units[attackerId];
+  if (rewardedAttacker) {
+    rewardedAttacker.hasMoved = true;
+    rewardedAttacker.hasActed = true;
+  }
+  rewardedState.selectedUnitId = undefined;
+  const resolvedState = applyGameResult(rewardedState);
+  return resolvedState.gameResult === "in_progress" ? maybeAdvancePhase(resolvedState) : resolvedState;
+}
+
+function resolveHealInState(
+  state: RuntimeGameState,
+  healerId: string,
+  targetId: string,
+): RuntimeGameState {
+  const healer = state.units[healerId];
+  const target = state.units[targetId];
+  const weapon = healer ? getEquippedWeapon(state, healer) : undefined;
+
+  if (
+    !healer ||
+    !target ||
+    !weapon ||
+    weapon.category !== "staff" ||
+    healer.team !== state.phase ||
+    healer.hasActed ||
+    healer.isDefeated ||
+    target.isDefeated ||
+    healer.team !== target.team ||
+    !canUnitHealTarget(state, healerId, targetId)
+  ) {
+    return state;
+  }
+
+  const nextState = cloneRuntimeState(state);
+  const nextHealer = nextState.units[healerId];
+  const nextTarget = nextState.units[targetId];
+  if (!nextHealer || !nextTarget) {
+    return state;
+  }
+
+  const healAmount = Math.max(1, nextHealer.stats.strength + weapon.power);
+  nextTarget.currentHp = Math.min(nextTarget.stats.maxHp, nextTarget.currentHp + healAmount);
+
+  let rewardedState = awardStaffUseRewards(nextState, healerId);
+  const rewardedHealer = rewardedState.units[healerId];
+  if (rewardedHealer) {
+    rewardedHealer.hasMoved = true;
+    rewardedHealer.hasActed = true;
+  }
+  rewardedState.selectedUnitId = undefined;
+  const resolvedState = applyGameResult(rewardedState);
   return resolvedState.gameResult === "in_progress" ? maybeAdvancePhase(resolvedState) : resolvedState;
 }
 

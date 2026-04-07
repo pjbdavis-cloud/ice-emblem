@@ -90,11 +90,22 @@ function createTestMap(units: UnitDefinition[]): BattleMapDefinition {
         growthRates: statLine(55, 60, 10, 35, 20, 45, 45),
         statCaps: statLine(34, 22, 10, 24, 12, 18, 20),
       },
+      {
+        id: "healer",
+        name: "Healer",
+        tier: 1,
+        movement: 5,
+        learnableDisciplines: ["staff"],
+        baseStats: statLine(18, 5, 4, 5, 2, 6, 5),
+        growthRates: statLine(60, 35, 30, 40, 15, 50, 35),
+        statCaps: statLine(34, 18, 16, 24, 12, 20, 18),
+      },
     ],
     weapons: [
       { id: "iron-sword", name: "Iron Sword", category: "sword", power: 5, complexity: 1, minRange: 1, maxRange: 1, requiredRank: "E" },
       { id: "iron-bow", name: "Iron Bow", category: "bow", power: 6, complexity: 2, minRange: 2, maxRange: 2, requiredRank: "E" },
       { id: "fire-tome", name: "Fire Tome", category: "elemental_magic", power: 5, complexity: 2, minRange: 1, maxRange: 2, requiredRank: "E" },
+      { id: "mend", name: "Mend", category: "staff", power: 8, complexity: 1, minRange: 1, maxRange: 2, requiredRank: "E" },
     ],
     units,
   };
@@ -107,6 +118,7 @@ function createUnit(overrides: Partial<UnitDefinition> & Pick<UnitDefinition, "i
     classId: overrides.classId ?? "fighter",
     team: overrides.team,
     level: overrides.level ?? 1,
+    experience: overrides.experience ?? 0,
     tier: overrides.tier ?? 1,
     stats: overrides.stats ?? { maxHp: 20, strength: 6, skill: 6, luck: 4, defense: 4, resistance: 3, speed: 5 },
     currentHp: overrides.currentHp ?? (overrides.stats?.maxHp ?? 20),
@@ -116,6 +128,8 @@ function createUnit(overrides: Partial<UnitDefinition> & Pick<UnitDefinition, "i
     weaponProficiencies: overrides.weaponProficiencies ?? {
       sword: "E",
     },
+    weaponProficiencyExperience: overrides.weaponProficiencyExperience ?? {},
+    growthBonuses: overrides.growthBonuses ?? {},
     personalSkillId: overrides.personalSkillId,
     classSkillId: overrides.classSkillId,
     behavior: overrides.behavior,
@@ -468,5 +482,42 @@ describe("victory and defeat rules", () => {
 
     expect(nextState).toBe(completedState);
     expect(previewNextEnemyAction(completedState).nextState).toBe(completedState);
+  });
+
+  it("heals a damaged ally with a staff and grants staff experience", () => {
+    const runtime = createInitialRuntimeState(
+      createTestMap([
+        createUnit({
+          id: "healer",
+          team: "player",
+          classId: "healer",
+          position: { x: 1, y: 1 },
+          stats: { maxHp: 18, strength: 5, skill: 4, luck: 5, defense: 2, resistance: 6, speed: 5 },
+          inventory: ["mend"],
+          equippedWeaponId: "mend",
+          weaponProficiencies: { staff: "E" },
+        }),
+        createUnit({
+          id: "ally",
+          team: "player",
+          position: { x: 2, y: 1 },
+          currentHp: 10,
+          stats: { maxHp: 20, strength: 6, skill: 6, luck: 4, defense: 4, resistance: 3, speed: 5 },
+        }),
+      ]),
+    );
+
+    const nextState = applyAction(runtime, {
+      type: "healUnit",
+      healerId: "healer",
+      targetId: "ally",
+    });
+
+    expect(nextState.units.ally.currentHp).toBe(22);
+    expect(nextState.units.healer.experience).toBe(20);
+    expect(nextState.units.healer.weaponProficiencies.staff).toBe("E");
+    expect(nextState.units.healer.weaponProficiencyExperience?.staff).toBe(20);
+    expect(nextState.units.healer.hasMoved).toBe(true);
+    expect(nextState.units.healer.hasActed).toBe(true);
   });
 });
