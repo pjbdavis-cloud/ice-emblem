@@ -83,6 +83,7 @@ export const unitSkeletons: UnitDefinition[] = [
     classId: "my-journeyman",
     team: "player",
     level: 1,
+    experience: 0,
     tier: 1,
     stats: {
       maxHp: 21,
@@ -100,6 +101,10 @@ export const unitSkeletons: UnitDefinition[] = [
     weaponProficiencies: {
       elemental_magic: "E",
     },
+    growthBonuses: {
+      strength: 5,
+      speed: 10,
+    },
     personalSkillId: "steady-heart",
     classSkillId: "lead-the-charge",
     isLeader: true,
@@ -110,6 +115,7 @@ export const unitSkeletons: UnitDefinition[] = [
     classId: "my-pupil",
     team: "enemy",
     level: 2,
+    experience: 0,
     tier: 1,
     stats: {
       maxHp: 18,
@@ -126,6 +132,10 @@ export const unitSkeletons: UnitDefinition[] = [
     equippedWeaponId: "training-sword",
     weaponProficiencies: {
       sword: "E",
+    },
+    growthBonuses: {
+      maxHp: 5,
+      strength: 10,
     },
     behavior: "aggressive",
   },

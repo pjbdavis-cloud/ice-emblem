@@ -6,22 +6,36 @@ import {
   buildPlayerActionPresentation,
   canUndo,
   getAttackReachPreviewPositions,
+  getSupportReachPreviewPositions,
   getUnitMovement,
   getMovementPathPreview,
   getMovementPreviewPositions,
   getReachablePositions,
   getThreatenedPositions,
   getUnitAttackOptions,
+  getUnitHealOptions,
   previewNextEnemyAction,
 } from "../../game/core/state";
 import type { Position, RuntimeGameState, UnitState } from "../../game/types";
-import { BattleCanvas } from "./BattleCanvas";
+import { BattleCanvas, type BattleCanvasHandle, CAMERA_VIEWPORT_PRESETS } from "./BattleCanvas";
 import type { PresentationEvent } from "../presentation/types";
+import {
+  addSaveEntry,
+  createSaveEntry,
+  createSerializedGameState,
+  getAllSaveEntries,
+  loadSaveEntry,
+  readSaveCollection,
+  type SaveCollection,
+  type SaveEntry,
+  writeSaveCollection,
+} from "../saveState";
 
-type PendingAction = "none" | "chooseAction" | "chooseAttackTarget";
+type PendingAction = "none" | "chooseAction" | "chooseAttackTarget" | "chooseHealTarget";
 
 const ENEMY_PHASE_STEP_DELAY_MS = 600;
 const PHASE_BANNER_DURATION_MS = 1600;
+const AUTOSAVE_INTERVAL_MS = 5 * 60 * 1000;
 
 export function BattleScreen() {
   const dispatch = useAppDispatch();
@@ -53,12 +67,29 @@ export function BattleScreen() {
   const [showPhaseBanner, setShowPhaseBanner] = useState(true);
   const [pendingPhaseBanner, setPendingPhaseBanner] = useState<RuntimeGameState["phase"] | undefined>();
   const actionMenuRef = useRef<HTMLDivElement>(null);
+  const battleCanvasRef = useRef<BattleCanvasHandle>(null);
   const previousPhaseRef = useRef(runtime.phase);
   const isPlayerBannerBlocking = showPhaseBanner && phaseBanner.phase === "player";
   const [bannerInstance, setBannerInstance] = useState(0);
+  const [viewportPresetIndex, setViewportPresetIndex] = useState(0);
+  const [cameraViewport, setCameraViewport] = useState({
+    offsetX: 0,
+    offsetY: 0,
+    visibleColumns: runtime.map.width,
+    visibleRows: runtime.map.height,
+  });
+  const [saveCollection, setSaveCollection] = useState<SaveCollection>(() => readSaveCollection());
+  const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
+  const [saveNotice, setSaveNotice] = useState<string | undefined>();
+  const latestRuntimeRef = useRef(runtime);
+  const latestSnapshotRef = useRef(JSON.stringify(createSerializedGameState(runtime)));
+  const lastAutosaveSnapshotRef = useRef<string | undefined>(undefined);
 
   const selectedUnit = runtime.selectedUnitId ? runtime.units[runtime.selectedUnitId] : undefined;
+  const selectedWeapon = selectedUnit ? getEquippedWeapon(runtime, selectedUnit) : undefined;
+  const selectedActionKind = selectedWeapon?.category === "staff" ? "heal" : "attack";
   const objectiveLabel = formatObjectiveLabel(runtime.map.objectives.type);
+  const allSaveEntries = useMemo(() => getAllSaveEntries(saveCollection), [saveCollection]);
   const units = Object.values(runtime.units);
   const {
     clearThreatSelection,
@@ -120,6 +151,13 @@ export function BattleScreen() {
         : [],
     [canShowHoveredActionPreview, hoveredUnit, runtime],
   );
+  const hoveredHealPreviewTiles = useMemo(
+    () =>
+      hoveredUnit && canShowHoveredActionPreview
+        ? getSupportReachPreviewPositions(runtime, hoveredUnit.id)
+        : [],
+    [canShowHoveredActionPreview, hoveredUnit, runtime],
+  );
   useEffect(() => {
     if (
       !selectedUnit ||
@@ -162,6 +200,14 @@ export function BattleScreen() {
     const sourceState = stagedDestination ? movePreviewState : runtime;
     return getUnitAttackOptions(sourceState, selectedUnit.id);
   }, [movePreviewState, runtime, selectedUnit, stagedDestination]);
+  const healableTargets = useMemo(() => {
+    if (!selectedUnit) {
+      return [];
+    }
+
+    const sourceState = stagedDestination ? movePreviewState : runtime;
+    return getUnitHealOptions(sourceState, selectedUnit.id);
+  }, [movePreviewState, runtime, selectedUnit, stagedDestination]);
 
   const hoveredEnemyUnit =
     hoveredUnit && selectedUnit && hoveredUnit.team !== selectedUnit.team
@@ -173,7 +219,7 @@ export function BattleScreen() {
         ? attackableTargets.find((unit) => unit.id === hoveredUnit.id)
         : undefined;
 
-  const previewTarget = hoveredEnemyUnit;
+  const previewTarget = selectedActionKind === "attack" ? hoveredEnemyUnit : undefined;
   const previewState = stagedDestination ? movePreviewState : runtime;
   const combatPreview =
     selectedUnit && previewTarget
@@ -196,7 +242,7 @@ export function BattleScreen() {
     previewDefenderWeapon?.category,
   );
   const hoveredCombatPreview =
-    selectedUnit && hoveredEnemyUnit
+    selectedUnit && hoveredEnemyUnit && selectedActionKind === "attack"
       ? getProjectedCombatPreview(previewState, selectedUnit.id, hoveredEnemyUnit.id)
       : undefined;
   const showingSelectedRanges = Boolean(selectedUnit);
@@ -219,7 +265,7 @@ export function BattleScreen() {
   const moveHighlightTiles = showingSelectedRanges ? selectedMovePreviewTiles : hoveredMovePreviewTiles;
   const moveHighlightTeam = showingSelectedRanges ? selectedUnit?.team : hoveredUnit?.team;
   const selectedAttackPreviewTiles = useMemo(() => {
-    if (!selectedUnit || !canUnitTakePlayerActions(selectedUnit, runtime)) {
+    if (!selectedUnit || !canUnitTakePlayerActions(selectedUnit, runtime) || selectedActionKind !== "attack") {
       return [];
     }
 
@@ -229,8 +275,19 @@ export function BattleScreen() {
 
     return getAttackReachPreviewPositions(runtime, selectedUnit.id);
   }, [movePreviewState, runtime, selectedUnit, stagedDestination]);
+  const selectedHealPreviewTiles = useMemo(() => {
+    if (!selectedUnit || !canUnitTakePlayerActions(selectedUnit, runtime) || selectedActionKind !== "heal") {
+      return [];
+    }
+
+    if (stagedDestination) {
+      return getDirectSupportRangePositions(movePreviewState, selectedUnit.id);
+    }
+
+    return getSupportReachPreviewPositions(runtime, selectedUnit.id);
+  }, [movePreviewState, runtime, selectedActionKind, selectedUnit, stagedDestination]);
   const attackHighlightTiles = useMemo(() => {
-    if (pendingAction === "chooseAttackTarget") {
+    if (pendingAction === "chooseAttackTarget" || selectedActionKind !== "attack") {
       return [];
     }
 
@@ -243,7 +300,27 @@ export function BattleScreen() {
     hoveredAttackPreviewTiles,
     hoveredMovePreviewTiles,
     pendingAction,
+    selectedActionKind,
     selectedAttackPreviewTiles,
+    selectedMovePreviewTiles,
+    showingSelectedRanges,
+  ]);
+  const healHighlightTiles = useMemo(() => {
+    if (pendingAction === "chooseHealTarget" || selectedActionKind !== "heal") {
+      return [];
+    }
+
+    const moveTiles = showingSelectedRanges ? selectedMovePreviewTiles : hoveredMovePreviewTiles;
+    const healTiles = showingSelectedRanges ? selectedHealPreviewTiles : hoveredHealPreviewTiles;
+    const moveKeys = new Set(moveTiles.map((tile) => `${tile.x},${tile.y}`));
+
+    return healTiles.filter((tile) => !moveKeys.has(`${tile.x},${tile.y}`));
+  }, [
+    hoveredHealPreviewTiles,
+    hoveredMovePreviewTiles,
+    pendingAction,
+    selectedActionKind,
+    selectedHealPreviewTiles,
     selectedMovePreviewTiles,
     showingSelectedRanges,
   ]);
@@ -254,9 +331,55 @@ export function BattleScreen() {
         : [],
     [attackableTargets, pendingAction],
   );
+  const targetableAllyTiles = useMemo(
+    () =>
+      pendingAction === "chooseHealTarget"
+        ? healableTargets.map((unit) => ({ x: unit.position.x, y: unit.position.y }))
+        : [],
+    [healableTargets, pendingAction],
+  );
   const hoveredAttackTargetTile = hoveredAttackTarget
     ? { x: hoveredAttackTarget.position.x, y: hoveredAttackTarget.position.y }
     : undefined;
+  const hoveredHealTarget =
+    hoveredUnit && selectedUnit && hoveredUnit.team === selectedUnit.team
+      ? healableTargets.find((unit) => unit.id === hoveredUnit.id)
+      : undefined;
+  const hoveredHealTargetTile = hoveredHealTarget
+    ? { x: hoveredHealTarget.position.x, y: hoveredHealTarget.position.y }
+    : undefined;
+  const isZoomLocked = isGameOver || isPlayerBannerBlocking || isBoardAnimating || runtime.phase === "enemy";
+
+  useEffect(() => {
+    latestRuntimeRef.current = runtime;
+    latestSnapshotRef.current = JSON.stringify(createSerializedGameState(runtime));
+  }, [runtime]);
+
+  useEffect(() => {
+    if (!saveNotice) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => setSaveNotice(undefined), 2400);
+    return () => window.clearTimeout(timeoutId);
+  }, [saveNotice]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      const snapshot = latestSnapshotRef.current;
+      if (snapshot === lastAutosaveSnapshotRef.current) {
+        return;
+      }
+
+      const nextEntry = createSaveEntry("autosave", latestRuntimeRef.current);
+      const nextCollection = addSaveEntry(readSaveCollection(), nextEntry);
+      writeSaveCollection(nextCollection);
+      setSaveCollection(nextCollection);
+      lastAutosaveSnapshotRef.current = snapshot;
+    }, AUTOSAVE_INTERVAL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   useEffect(() => {
     if (!isGameOver) {
@@ -356,7 +479,7 @@ export function BattleScreen() {
         return;
       }
 
-      if (pendingAction === "chooseAttackTarget") {
+      if (pendingAction === "chooseAttackTarget" || pendingAction === "chooseHealTarget") {
         setPendingAction("chooseAction");
         return;
       }
@@ -384,6 +507,16 @@ export function BattleScreen() {
               <a className="battle-link-button" href="/game-info">
                 Game Info
               </a>
+              <button type="button" disabled={isPlayerBannerBlocking} onClick={handleManualSave}>
+                Save
+              </button>
+              <button
+                type="button"
+                disabled={isPlayerBannerBlocking || allSaveEntries.length === 0}
+                onClick={() => setIsLoadModalOpen(true)}
+              >
+                Load
+              </button>
               <button
                 type="button"
                 disabled={isPlayerBannerBlocking || Object.keys(runtime.units).every((unitId) => runtime.units[unitId].team !== "enemy" || runtime.units[unitId].isDefeated)}
@@ -414,6 +547,7 @@ export function BattleScreen() {
             </div>
           )}
         </header>
+        {saveNotice ? <p className="save-notice">{saveNotice}</p> : null}
 
         <div className="layout">
           <div className="map-card">
@@ -428,6 +562,7 @@ export function BattleScreen() {
                   </div>
                 ) : null}
                 <BattleCanvas
+                  ref={battleCanvasRef}
                   runtime={runtime}
                   tiles={runtime.map.tiles}
                   width={runtime.map.width}
@@ -438,13 +573,20 @@ export function BattleScreen() {
                   moveHighlightTiles={moveHighlightTiles}
                   moveHighlightTeam={moveHighlightTeam}
                   attackHighlightTiles={attackHighlightTiles}
+                  healHighlightTiles={healHighlightTiles}
                   isAttackTargeting={pendingAction === "chooseAttackTarget"}
+                  isHealTargeting={pendingAction === "chooseHealTarget"}
                   targetableEnemyTiles={targetableEnemyTiles}
+                  targetableAllyTiles={targetableAllyTiles}
                   hoveredAttackTargetTile={hoveredAttackTargetTile}
+                  hoveredHealTargetTile={hoveredHealTargetTile}
                   selectedEnemyThreatTiles={selectedEnemyThreatTiles}
                   hoveredMovePath={hoveredMovePath}
                   enemyThreatOutlineTiles={enemyThreatOutlineTiles}
                   previewMove={previewMove}
+                  viewportPresetIndex={viewportPresetIndex}
+                  onViewportPresetIndexChange={setViewportPresetIndex}
+                  onViewportChange={setCameraViewport}
                   presentationQueue={presentationQueue}
                   grayLockUnitIds={grayLockUnitIds}
                   pendingDefeatedUnitIds={pendingDefeatedUnitIds}
@@ -474,9 +616,12 @@ export function BattleScreen() {
                     </button>
                   </div>
                 ) : null}
-                {selectedUnit && stagedDestination && isPreviewMoveReady && pendingAction === "chooseAttackTarget" ? (
+                {selectedUnit &&
+                stagedDestination &&
+                isPreviewMoveReady &&
+                (pendingAction === "chooseAttackTarget" || pendingAction === "chooseHealTarget") ? (
                   <div className="map-targeting-banner">
-                    <span>Select a target to attack.</span>
+                    <span>{pendingAction === "chooseHealTarget" ? "Select a target to heal." : "Select a target to attack."}</span>
                     <button
                       type="button"
                       disabled={isPlayerBannerBlocking}
@@ -505,10 +650,13 @@ export function BattleScreen() {
                     </p>
                     <button
                       type="button"
-                      disabled={isPlayerBannerBlocking || attackableTargets.length === 0}
-                      onClick={() => setPendingAction("chooseAttackTarget")}
+                      disabled={
+                        isPlayerBannerBlocking ||
+                        (selectedActionKind === "attack" ? attackableTargets.length === 0 : healableTargets.length === 0)
+                      }
+                      onClick={() => setPendingAction(selectedActionKind === "attack" ? "chooseAttackTarget" : "chooseHealTarget")}
                     >
-                      Attack
+                      {selectedActionKind === "attack" ? "Attack" : "Heal"}
                     </button>
                     <button type="button" disabled>
                       Use Item
@@ -542,7 +690,7 @@ export function BattleScreen() {
                                     hoveredCombatPreview.defenderMinDamage,
                                     hoveredCombatPreview.defenderMaxDamage,
                                   )
-                                : "None"}`,
+                                : "-"}`,
                           ]
                         : undefined
                     }
@@ -587,97 +735,183 @@ export function BattleScreen() {
               </section>
             </div>
 
-            <section className="card combat-preview-card">
-              <h2>Combat Preview</h2>
-              {selectedUnit && previewTarget && combatPreview ? (
-                <>
-                  <div className="combat-preview-layout">
-                    <div className="combat-preview-unit combat-preview-unit-left">
-                      <div className="combat-preview-header">
-                        <p className="combat-preview-name">{selectedUnit.name}</p>
-                        <p className="combat-preview-class">
-                          {previewAttackerClass?.name ?? selectedUnit.classId}
-                        </p>
-                      </div>
-                      <div className="combat-preview-stat">
-                        {renderCombatPreviewHpBar(
-                          selectedUnit.currentHp,
-                          selectedUnit.stats.maxHp,
-                          combatPreview.defenderPotentialCounter
-                            ? {
-                                minDamage: combatPreview.defenderMinDamage,
-                                maxDamage: combatPreview.defenderMaxDamage,
-                              }
-                            : undefined,
-                        )}
-                      </div>
-                      <p
-                        className={`combat-preview-stat combat-preview-damage ${
-                          attackerKoOutcome && attackerKoOutcome.tone !== "none"
-                            ? "combat-preview-damage-lethal"
-                            : ""
-                        }`}
-                      >
-                        {formatDamageRange(
-                          combatPreview.attackerMinDamage,
-                          combatPreview.attackerMaxDamage,
-                        )}
-                      </p>
-                      <div className="combat-preview-stat">
-                        <span>{previewAttackerWeapon?.name ?? "None"}</span>
-                        {renderTriangleIndicator(triangleRelation.attacker)}
-                      </div>
+            <div className="sidebar-detail-row">
+              <section className="card map-tools-card" data-testid="map-tools-card">
+                <h2>Map Tools</h2>
+                <div className="map-tools-zoom-row" aria-label="Map zoom controls">
+                  <button
+                    type="button"
+                    aria-label="Zoom out"
+                    disabled={isZoomLocked || viewportPresetIndex <= 0}
+                    onClick={() => battleCanvasRef.current?.zoomOut()}
+                  >
+                    -
+                  </button>
+                  <span className="camera-zoom-label">{CAMERA_VIEWPORT_PRESETS[viewportPresetIndex].label}</span>
+                  <button
+                    type="button"
+                    aria-label="Zoom in"
+                    disabled={isZoomLocked || viewportPresetIndex >= CAMERA_VIEWPORT_PRESETS.length - 1}
+                    onClick={() => battleCanvasRef.current?.zoomIn()}
+                  >
+                    +
+                  </button>
+                </div>
+                <div className="minimap-card" data-testid="battle-minimap">
+                  <div className="minimap-frame">
+                    <div
+                      className="minimap-grid"
+                      style={{
+                        gridTemplateColumns: `repeat(${runtime.map.width}, minmax(0, 1fr))`,
+                      }}
+                    >
+                      {buildMinimapCells(runtime, cameraViewport).map((cell) => (
+                        <span
+                          key={cell.key}
+                          aria-hidden="true"
+                          className={`minimap-tile minimap-tile-${cell.variant}`}
+                        />
+                      ))}
                     </div>
-                    <div className="combat-preview-center">
-                      <span className="combat-preview-label">Character</span>
-                      <span className="combat-preview-label">Hit Points</span>
-                      <span className="combat-preview-label">Damage</span>
-                      <span className="combat-preview-label">Weapon</span>
-                    </div>
-                    <div className="combat-preview-unit combat-preview-unit-right">
-                      <div className="combat-preview-header">
-                        <p className="combat-preview-name">{previewTarget.name}</p>
-                        <p className="combat-preview-class">
-                          {previewDefenderClass?.name ?? previewTarget.classId}
-                        </p>
-                      </div>
-                      <div className="combat-preview-stat">
-                        {renderCombatPreviewHpBar(
-                          previewTarget.currentHp,
-                          previewTarget.stats.maxHp,
-                          {
-                            minDamage: combatPreview.attackerMinDamage,
-                            maxDamage: combatPreview.attackerMaxDamage,
-                          },
-                        )}
-                      </div>
-                      <p
-                        className={`combat-preview-stat combat-preview-damage ${
-                          counterKoOutcome && counterKoOutcome.tone !== "none"
-                            ? "combat-preview-damage-lethal"
-                            : ""
-                        }`}
-                      >
-                        {combatPreview.defenderPotentialCounter
-                          ? formatDamageRange(
-                              combatPreview.defenderMinDamage,
-                              combatPreview.defenderMaxDamage,
-                            )
-                          : "-"}
-                      </p>
-                      <div className="combat-preview-stat">
-                        <span>{previewDefenderWeapon?.name ?? "None"}</span>
-                        {renderTriangleIndicator(triangleRelation.defender)}
-                      </div>
-                    </div>
+                    <div
+                      aria-hidden="true"
+                      className="minimap-viewport"
+                      style={getMinimapViewportStyle(runtime, cameraViewport)}
+                    />
                   </div>
-                </>
-              ) : (
-                <p>Select a unit, stage a move, then hover an enemy to preview that fight.</p>
-              )}
-            </section>
+                </div>
+              </section>
+
+              <section className="card combat-preview-card">
+                <h2>Combat Preview</h2>
+                {selectedUnit && previewTarget && combatPreview ? (
+                  <>
+                    <div className="combat-preview-layout">
+                      <div className="combat-preview-unit combat-preview-unit-left">
+                        <div className="combat-preview-header">
+                          <p className="combat-preview-name">{selectedUnit.name}</p>
+                          <p className="combat-preview-class">
+                            {previewAttackerClass?.name ?? selectedUnit.classId}
+                          </p>
+                        </div>
+                        <div className="combat-preview-stat">
+                          {renderCombatPreviewHpBar(
+                            selectedUnit.currentHp,
+                            selectedUnit.stats.maxHp,
+                            combatPreview.defenderPotentialCounter
+                              ? {
+                                  minDamage: combatPreview.defenderMinDamage,
+                                  maxDamage: combatPreview.defenderMaxDamage,
+                                }
+                              : undefined,
+                          )}
+                        </div>
+                        <p
+                          className={`combat-preview-stat combat-preview-damage ${
+                            attackerKoOutcome && attackerKoOutcome.tone !== "none"
+                              ? "combat-preview-damage-lethal"
+                              : ""
+                          }`}
+                        >
+                          {formatDamageRange(
+                            combatPreview.attackerMinDamage,
+                            combatPreview.attackerMaxDamage,
+                          )}
+                        </p>
+                        <div className="combat-preview-stat">
+                          <span>{previewAttackerWeapon?.name ?? "None"}</span>
+                          {renderTriangleIndicator(triangleRelation.attacker)}
+                        </div>
+                      </div>
+                      <div className="combat-preview-center">
+                        <span className="combat-preview-label">Character</span>
+                        <span className="combat-preview-label">Hit Points</span>
+                        <span className="combat-preview-label">Damage</span>
+                        <span className="combat-preview-label">Weapon</span>
+                      </div>
+                      <div className="combat-preview-unit combat-preview-unit-right">
+                        <div className="combat-preview-header">
+                          <p className="combat-preview-name">{previewTarget.name}</p>
+                          <p className="combat-preview-class">
+                            {previewDefenderClass?.name ?? previewTarget.classId}
+                          </p>
+                        </div>
+                        <div className="combat-preview-stat">
+                          {renderCombatPreviewHpBar(
+                            previewTarget.currentHp,
+                            previewTarget.stats.maxHp,
+                            {
+                              minDamage: combatPreview.attackerMinDamage,
+                              maxDamage: combatPreview.attackerMaxDamage,
+                            },
+                          )}
+                        </div>
+                        <p
+                          className={`combat-preview-stat combat-preview-damage ${
+                            counterKoOutcome && counterKoOutcome.tone !== "none"
+                              ? "combat-preview-damage-lethal"
+                              : ""
+                          }`}
+                        >
+                          {combatPreview.defenderPotentialCounter
+                            ? formatDamageRange(
+                                combatPreview.defenderMinDamage,
+                                combatPreview.defenderMaxDamage,
+                              )
+                            : "-"}
+                        </p>
+                        <div className="combat-preview-stat">
+                          <span>{previewDefenderWeapon?.name ?? "None"}</span>
+                          {renderTriangleIndicator(triangleRelation.defender)}
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <p>Select a unit, stage a move, then hover an enemy to preview that fight.</p>
+                )}
+              </section>
+            </div>
           </aside>
         </div>
+        {isLoadModalOpen ? (
+          <div className="save-modal-backdrop" role="presentation" onClick={() => setIsLoadModalOpen(false)}>
+            <section
+              aria-label="Load saved game"
+              className="save-modal"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="save-modal-header">
+                <h2>Load Saved Game</h2>
+                <button type="button" onClick={() => setIsLoadModalOpen(false)}>
+                  Close
+                </button>
+              </div>
+              <div className="save-modal-columns">
+                <div className="save-list-section">
+                  <h3>Manual Saves</h3>
+                  {saveCollection.manual.length > 0 ? (
+                    <div className="save-entry-list">
+                      {saveCollection.manual.map((entry) => renderSaveEntry(entry))}
+                    </div>
+                  ) : (
+                    <p className="save-empty">No manual saves yet.</p>
+                  )}
+                </div>
+                <div className="save-list-section">
+                  <h3>Autosaves</h3>
+                  {saveCollection.autosave.length > 0 ? (
+                    <div className="save-entry-list">
+                      {saveCollection.autosave.map((entry) => renderSaveEntry(entry))}
+                    </div>
+                  ) : (
+                    <p className="save-empty">No autosaves yet.</p>
+                  )}
+                </div>
+              </div>
+            </section>
+          </div>
+        ) : null}
       </section>
     </main>
   );
@@ -690,8 +924,17 @@ export function BattleScreen() {
     const clickedUnit = getUnitAtPosition(units, position);
 
     if (pendingAction === "chooseAttackTarget" && selectedUnit) {
-      if (clickedUnit?.team !== selectedUnit.team) {
+      if (clickedUnit?.team !== selectedUnit.team && attackableTargets.some((unit) => unit.id === clickedUnit?.id)) {
         handleAttack(clickedUnit?.id);
+      } else {
+        setPendingAction("chooseAction");
+      }
+      return;
+    }
+
+    if (pendingAction === "chooseHealTarget" && selectedUnit) {
+      if (clickedUnit?.team === selectedUnit.team && healableTargets.some((unit) => unit.id === clickedUnit?.id)) {
+        handleHeal(clickedUnit?.id);
       } else {
         setPendingAction("chooseAction");
       }
@@ -801,6 +1044,31 @@ export function BattleScreen() {
     }
   }
 
+  function handleHeal(targetId?: string) {
+    if (isGameOver || isPlayerBannerBlocking || !selectedUnit || !targetId) {
+      return;
+    }
+
+    const result = buildPlayerActionPresentation(
+      runtime,
+      {
+        type: "healUnit",
+        healerId: selectedUnit.id,
+        targetId,
+      },
+      stagedDestination,
+    );
+
+    if (shouldSkipPlayerMoveReplay()) {
+      dispatch(replaceRuntimeState(result.nextState));
+    } else if (result.presentationEvents.length > 0) {
+      queuePresentationEvents(result.presentationEvents, result.nextState, runtime);
+    } else {
+      dispatch(replaceRuntimeState(result.nextState));
+    }
+    clearStagedAction();
+  }
+
   function handleWait() {
     if (isGameOver || isPlayerBannerBlocking || !selectedUnit) {
       return;
@@ -829,6 +1097,7 @@ export function BattleScreen() {
       return;
     }
 
+    setViewportPresetIndex(0);
     clearStagedAction();
     clearSelection();
     dispatch(resetDemoState());
@@ -849,7 +1118,7 @@ export function BattleScreen() {
       return;
     }
 
-    if (pendingAction === "chooseAttackTarget") {
+    if (pendingAction === "chooseAttackTarget" || pendingAction === "chooseHealTarget") {
       setPendingAction("chooseAction");
       return;
     }
@@ -894,6 +1163,33 @@ export function BattleScreen() {
     dispatch(dispatchGameAction({ type: "selectUnit", unitId: undefined }));
   }
 
+  function handleManualSave() {
+    if (isPlayerBannerBlocking) {
+      return;
+    }
+
+    const entry = createSaveEntry("manual", runtime);
+    const nextCollection = addSaveEntry(readSaveCollection(), entry);
+    writeSaveCollection(nextCollection);
+    setSaveCollection(nextCollection);
+    setSaveNotice(`Saved ${entry.name}`);
+  }
+
+  function handleLoadSave(entry: SaveEntry) {
+    const loaded = loadSaveEntry(entry);
+    if (!loaded) {
+      setSaveNotice("That save could not be loaded.");
+      return;
+    }
+
+    clearStagedAction();
+    setHoveredTile(undefined);
+    setHoveredMovePath([]);
+    setIsLoadModalOpen(false);
+    dispatch(replaceRuntimeState(loaded.game.runtime));
+    setSaveNotice(`Loaded ${entry.name}`);
+  }
+
   function queuePresentationEvents(
     events: PresentationEvent[],
     nextState: RuntimeGameState,
@@ -916,6 +1212,20 @@ export function BattleScreen() {
 
   function shouldSkipPlayerMoveReplay() {
     return Boolean(stagedDestination && previewMove && isPreviewMoveReady);
+  }
+
+  function renderSaveEntry(entry: SaveEntry) {
+    return (
+      <article key={entry.id} className="save-entry-card">
+        <div className="save-entry-copy">
+          <p className="save-entry-name">{entry.name}</p>
+          <p className="save-entry-meta">{formatSaveTimestamp(entry.savedAt)}</p>
+        </div>
+        <button type="button" onClick={() => handleLoadSave(entry)}>
+          Load
+        </button>
+      </article>
+    );
   }
 }
 
@@ -1331,6 +1641,8 @@ function UnitSummaryCard({
       </div>
 
       <div className="unit-meta-list">
+        <p>Level: {unit.level}</p>
+        <p>EXP: {unit.experience}%</p>
         <p>Tile: {unit.position.x},{unit.position.y}</p>
         <p>Status: {formatTeamStatus(unit.team)}</p>
       </div>
@@ -1349,7 +1661,11 @@ function UnitSummaryCard({
         <p className="unit-detail-label">Proficiencies</p>
         <p className="unit-detail-value">
           {proficiencyEntries.length > 0
-            ? proficiencyEntries.map(([discipline, rank]) => `${formatWeaponDiscipline(discipline)} ${rank}`).join(" | ")
+            ? proficiencyEntries
+                .map(([discipline, rank]) =>
+                  `${formatWeaponDiscipline(discipline)} ${rank} ${getWeaponProficiencyProgress(unit, discipline)}%`,
+                )
+                .join(" | ")
             : "None"}
         </p>
       </div>
@@ -1413,8 +1729,8 @@ function formatWeaponDiscipline(discipline: string) {
       return "Light";
     case "dark_magic":
       return "Dark";
-    case "healing":
-      return "Heal";
+    case "staff":
+      return "Staff";
     case "sword":
       return "Sword";
     case "axe":
@@ -1428,14 +1744,128 @@ function formatWeaponDiscipline(discipline: string) {
   }
 }
 
+function getWeaponProficiencyProgress(
+  unit: Pick<UnitState, "weaponProficiencyExperience">,
+  discipline: string,
+) {
+  return unit.weaponProficiencyExperience?.[discipline as keyof NonNullable<UnitState["weaponProficiencyExperience"]>] ?? 0;
+}
+
+function buildMinimapCells(
+  runtime: RuntimeGameState,
+  _viewport: {
+    offsetX: number;
+    offsetY: number;
+    visibleColumns: number;
+    visibleRows: number;
+  },
+) {
+  const activeUnitsByPosition = new Map<string, UnitState>();
+
+  for (const unit of Object.values(runtime.units)) {
+    if (unit.isDefeated || unit.currentHp <= 0) {
+      continue;
+    }
+
+    activeUnitsByPosition.set(`${unit.position.x},${unit.position.y}`, unit);
+  }
+
+  return runtime.map.tiles.flatMap((row, y) =>
+    row.map((tile, x) => {
+      const unit = activeUnitsByPosition.get(`${x},${y}`);
+      let variant = "plain";
+
+      if (unit?.team === "enemy") {
+        variant = "enemy";
+      } else if (unit?.team === "ally") {
+        variant = "ally";
+      } else if (unit?.team === "player") {
+        variant = "player";
+      } else if (tile.terrain === "wall") {
+        variant = "wall";
+      } else if (tile.terrain === "forest") {
+        variant = "forest";
+      } else if (tile.terrain === "fort") {
+        variant = "fort";
+      }
+
+      return {
+        key: `${x},${y}`,
+        variant,
+      };
+    }),
+  );
+}
+
+function getMinimapViewportStyle(
+  runtime: RuntimeGameState,
+  viewport: {
+    offsetX: number;
+    offsetY: number;
+    visibleColumns: number;
+    visibleRows: number;
+  },
+) {
+  return {
+    left: `${(viewport.offsetX / runtime.map.width) * 100}%`,
+    top: `${(viewport.offsetY / runtime.map.height) * 100}%`,
+    width: `${(viewport.visibleColumns / runtime.map.width) * 100}%`,
+    height: `${(viewport.visibleRows / runtime.map.height) * 100}%`,
+  };
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
+}
+
+function formatSaveTimestamp(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
 }
 
 function getDirectAttackRangePositions(state: RuntimeGameState, unitId: string): Position[] {
   const unit = state.units[unitId];
   const weapon = unit ? getEquippedWeapon(state, unit) : undefined;
-  if (!unit || !weapon || unit.isDefeated) {
+  if (!unit || !weapon || unit.isDefeated || weapon.category === "staff") {
+    return [];
+  }
+
+  const positions: Position[] = [];
+  for (let dx = -weapon.maxRange; dx <= weapon.maxRange; dx += 1) {
+    for (let dy = -weapon.maxRange; dy <= weapon.maxRange; dy += 1) {
+      const distance = Math.abs(dx) + Math.abs(dy);
+      if (distance < weapon.minRange || distance > weapon.maxRange) {
+        continue;
+      }
+
+      const position = { x: unit.position.x + dx, y: unit.position.y + dy };
+      if (
+        position.x < 0 ||
+        position.y < 0 ||
+        position.x >= state.map.width ||
+        position.y >= state.map.height
+      ) {
+        continue;
+      }
+
+      positions.push(position);
+    }
+  }
+
+  return positions;
+}
+
+function getDirectSupportRangePositions(state: RuntimeGameState, unitId: string): Position[] {
+  const unit = state.units[unitId];
+  const weapon = unit ? getEquippedWeapon(state, unit) : undefined;
+  if (!unit || !weapon || unit.isDefeated || weapon.category !== "staff") {
     return [];
   }
 

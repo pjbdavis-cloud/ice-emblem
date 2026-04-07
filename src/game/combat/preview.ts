@@ -105,7 +105,7 @@ export function canUnitStrikeTarget(
   defender: UnitState,
 ): boolean {
   const attackerWeapon = getEquippedWeapon(state, attacker);
-  if (!attackerWeapon) {
+  if (!attackerWeapon || attackerWeapon.category === "staff") {
     return false;
   }
 
@@ -124,7 +124,7 @@ export function calculateDamageRange(
   weapon: WeaponDefinition,
 ): DamageRange {
   const triangleBonus = getTriangleBonus(defender, weapon, state);
-  const isMagicAttack = isMagicDiscipline(weapon.category) || weapon.category === "healing";
+  const isMagicAttack = isMagicDiscipline(weapon.category);
   const offenseStat = applyInjuryPenalty(state, attacker, attacker.stats.strength);
   const guardStat = applyInjuryPenalty(
     state,

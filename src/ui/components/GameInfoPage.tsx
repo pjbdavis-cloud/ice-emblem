@@ -244,6 +244,7 @@ function CharactersTable({
               <th>Team</th>
               <th>Class</th>
               <th>Level</th>
+              <th>EXP</th>
               <th>Items</th>
               <th>Proficiencies</th>
               {statColumns.map((column) => (
@@ -274,6 +275,7 @@ function CharactersTable({
                   <td>{formatTeam(unit.team)}</td>
                   <td>{classData?.name ?? unit.classId}</td>
                   <td>{unit.level}</td>
+                  <td>{unit.experience}%</td>
                   <td>{formatInventory(unit, weaponsById)}</td>
                   <td>{formatProficiencies(unit)}</td>
                   {statColumns.map((column) => (
@@ -442,6 +444,7 @@ function CharacterDetailCard({
           <span>{formatTeam(unit.team)}</span>
           <span>{classData?.name ?? unit.classId}</span>
           <span>Level {unit.level}</span>
+          <span>EXP {unit.experience}%</span>
         </div>
       </div>
       <div className="wiki-detail-grid">
@@ -669,8 +672,8 @@ function formatDiscipline(value: string) {
       return "Light Magic";
     case "dark_magic":
       return "Dark Magic";
-    case "healing":
-      return "Healing";
+    case "staff":
+      return "Staff";
     default:
       return value.charAt(0).toUpperCase() + value.slice(1);
   }
@@ -718,8 +721,15 @@ function renderInventoryLinks(
 function formatProficiencies(unit: UnitDefinition) {
   return Object.entries(unit.weaponProficiencies)
     .filter((entry) => Boolean(entry[1]))
-    .map(([discipline, rank]) => `${formatDiscipline(discipline)} ${rank}`)
+    .map(([discipline, rank]) => `${formatDiscipline(discipline)} ${rank} ${getWeaponProficiencyProgress(unit, discipline)}%`)
     .join(", ");
+}
+
+function getWeaponProficiencyProgress(
+  unit: Pick<UnitDefinition, "weaponProficiencyExperience">,
+  discipline: string,
+) {
+  return unit.weaponProficiencyExperience?.[discipline as keyof NonNullable<UnitDefinition["weaponProficiencyExperience"]>] ?? 0;
 }
 
 function formatStatsInline(stats: Stats) {

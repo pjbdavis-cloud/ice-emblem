@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { levelUpUnit } from "./progression";
+import { awardCombatRewards, getUnitGrowthRates, levelUpUnit } from "./progression";
 import { createInitialRuntimeState } from "./state";
 import type { BattleMapDefinition, UnitDefinition } from "../types";
 
@@ -69,6 +69,7 @@ function createUnit(overrides: Partial<UnitDefinition> & Pick<UnitDefinition, "i
     classId: overrides.classId ?? "fighter",
     team: overrides.team,
     level: overrides.level ?? 1,
+    experience: overrides.experience ?? 0,
     tier: overrides.tier ?? 1,
     stats: overrides.stats ?? statLine(22, 7, 5, 3, 3, 1, 5),
     currentHp: overrides.currentHp ?? (overrides.stats?.maxHp ?? 22),
@@ -78,6 +79,8 @@ function createUnit(overrides: Partial<UnitDefinition> & Pick<UnitDefinition, "i
     weaponProficiencies: overrides.weaponProficiencies ?? {
       axe: "E",
     },
+    weaponProficiencyExperience: overrides.weaponProficiencyExperience ?? {},
+    growthBonuses: overrides.growthBonuses ?? {},
   };
 }
 
@@ -199,5 +202,128 @@ describe("levelUpUnit", () => {
     expect(result.statGains).toEqual(statLine(0, 0, 0, 0, 0, 0, 0));
     expect(result.nextState.units.mystery.level).toBe(1);
     expect(result.nextState.units.mystery.stats).toEqual(statLine(22, 7, 5, 3, 3, 1, 5));
+  });
+
+  it("adds unit growth bonuses on top of class growth rates", () => {
+    const runtime = createInitialRuntimeState(
+      createTestMap([
+        createUnit({
+          id: "fighter",
+          team: "player",
+          position: { x: 1, y: 1 },
+          growthBonuses: {
+            maxHp: 5,
+            strength: 10,
+            skill: 20,
+            luck: 5,
+            resistance: 10,
+          },
+        }),
+      ]),
+    );
+
+    expect(getUnitGrowthRates(runtime.units.fighter, runtime.map.classes[0].growthRates)).toEqual(
+      statLine(105, 55, 55, 35, 15, 15, 120),
+    );
+  });
+
+  it("awards skirmish experience and weapon proficiency progress after combat", () => {
+    const runtime = createInitialRuntimeState(
+      createTestMap([
+        createUnit({
+          id: "fighter",
+          team: "player",
+          position: { x: 1, y: 1 },
+        }),
+      ]),
+    );
+
+    const result = awardCombatRewards(runtime, "fighter", { defeatedTarget: false });
+
+    expect(result.units.fighter.experience).toBe(20);
+    expect(result.units.fighter.level).toBe(1);
+    expect(result.units.fighter.weaponProficiencyExperience?.axe ?? 0).toBe(20);
+    expect(result.units.fighter.weaponProficiencies.axe).toBe("E");
+  });
+
+  it("levels up when combat rewards reach 100 experience and carries overflow", () => {
+    const runtime = createInitialRuntimeState(
+      createTestMap([
+        createUnit({
+          id: "fighter",
+          team: "player",
+          position: { x: 1, y: 1 },
+          experience: 90,
+        }),
+      ]),
+    );
+
+    const result = awardCombatRewards(runtime, "fighter", { defeatedTarget: false });
+
+    expect(result.units.fighter.level).toBe(2);
+    expect(result.units.fighter.experience).toBe(10);
+    expect(result.units.fighter.weaponProficiencyExperience?.axe ?? 0).toBe(20);
+  });
+
+  it("awards extra experience and proficiency for a defeat and promotes weapon rank at 100", () => {
+    const runtime = createInitialRuntimeState(
+      createTestMap([
+        createUnit({
+          id: "fighter",
+          team: "player",
+          position: { x: 1, y: 1 },
+          weaponProficiencyExperience: { axe: 90 },
+        }),
+      ]),
+    );
+
+    const result = awardCombatRewards(runtime, "fighter", { defeatedTarget: true });
+
+    expect(result.units.fighter.experience).toBe(80);
+    expect(result.units.fighter.weaponProficiencies.axe).toBe("D");
+    expect(result.units.fighter.weaponProficiencyExperience?.axe ?? 0).toBe(70);
+  });
+
+  it("stops gaining experience at level 20", () => {
+    const runtime = createInitialRuntimeState(
+      createTestMap([
+        createUnit({
+          id: "fighter",
+          team: "player",
+          position: { x: 1, y: 1 },
+          level: 20,
+          experience: 80,
+          weaponProficiencyExperience: { axe: 40 },
+        }),
+      ]),
+    );
+
+    const result = awardCombatRewards(runtime, "fighter", { defeatedTarget: true });
+
+    expect(result.units.fighter.level).toBe(20);
+    expect(result.units.fighter.experience).toBe(0);
+    expect(result.units.fighter.weaponProficiencies.axe).toBe("D");
+    expect(result.units.fighter.weaponProficiencyExperience?.axe ?? 0).toBe(20);
+  });
+
+  it("does not award experience or weapon proficiency progress to enemies", () => {
+    const runtime = createInitialRuntimeState(
+      createTestMap([
+        createUnit({
+          id: "enemy-fighter",
+          team: "enemy",
+          position: { x: 1, y: 1 },
+          experience: 40,
+          weaponProficiencyExperience: { axe: 30 },
+        }),
+      ]),
+    );
+
+    const result = awardCombatRewards(runtime, "enemy-fighter", { defeatedTarget: true });
+
+    expect(result.units["enemy-fighter"].level).toBe(1);
+    expect(result.units["enemy-fighter"].experience).toBe(40);
+    expect(result.units["enemy-fighter"].weaponProficiencies.axe).toBe("E");
+    expect(result.units["enemy-fighter"].weaponProficiencyExperience?.axe ?? 0).toBe(30);
   });
 });

@@ -92,6 +92,7 @@ function createUnit(overrides: Partial<UnitDefinition> & Pick<UnitDefinition, "i
     classId: overrides.classId ?? "fighter",
     team: overrides.team,
     level: overrides.level ?? 1,
+    experience: overrides.experience ?? 0,
     tier: overrides.tier ?? 1,
     stats: overrides.stats ?? { maxHp: 20, strength: 6, skill: 6, luck: 4, defense: 4, resistance: 3, speed: 5 },
     currentHp: overrides.currentHp ?? (overrides.stats?.maxHp ?? 20),
@@ -101,6 +102,8 @@ function createUnit(overrides: Partial<UnitDefinition> & Pick<UnitDefinition, "i
     weaponProficiencies: overrides.weaponProficiencies ?? {
       sword: "E",
     },
+    weaponProficiencyExperience: overrides.weaponProficiencyExperience ?? {},
+    growthBonuses: overrides.growthBonuses ?? {},
     personalSkillId: overrides.personalSkillId,
     classSkillId: overrides.classSkillId,
     behavior: overrides.behavior,

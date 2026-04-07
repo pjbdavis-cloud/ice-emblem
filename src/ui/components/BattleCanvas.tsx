@@ -1,7 +1,12 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { getEquippedWeapon } from "../../game/combat/preview";
 import type { Position, RuntimeGameState, Team, TileDefinition, UnitState } from "../../game/types";
 import type { PresentationEvent } from "../presentation/types";
+
+export type BattleCanvasHandle = {
+  zoomIn: () => void;
+  zoomOut: () => void;
+};
 
 type BattleCanvasProps = {
   runtime: RuntimeGameState;
@@ -15,9 +20,13 @@ type BattleCanvasProps = {
   moveHighlightTiles: Position[];
   moveHighlightTeam?: Team;
   attackHighlightTiles: Position[];
+  healHighlightTiles: Position[];
   isAttackTargeting: boolean;
+  isHealTargeting: boolean;
   targetableEnemyTiles: Position[];
+  targetableAllyTiles: Position[];
   hoveredAttackTargetTile?: Position;
+  hoveredHealTargetTile?: Position;
   selectedEnemyThreatTiles: Position[];
   hoveredMovePath: Position[];
   enemyThreatOutlineTiles: Position[];
@@ -26,6 +35,14 @@ type BattleCanvasProps = {
     path: Position[];
     destination: Position;
   };
+  viewportPresetIndex: number;
+  onViewportPresetIndexChange?: (nextIndex: number) => void;
+  onViewportChange?: (viewport: {
+    offsetX: number;
+    offsetY: number;
+    visibleColumns: number;
+    visibleRows: number;
+  }) => void;
   presentationQueue: PresentationEvent[];
   grayLockUnitIds: string[];
   pendingDefeatedUnitIds: string[];
@@ -51,6 +68,13 @@ type BoardMetrics = {
 type VisualPosition = {
   x: number;
   y: number;
+};
+
+type PointerAnchor = {
+  boardX: number;
+  boardY: number;
+  viewportRatioX: number;
+  viewportRatioY: number;
 };
 
 type ActivePresentation = {
@@ -80,13 +104,13 @@ const PLAYER_MOVE_ANIMATION_MS = 150;
 const ENEMY_MOVE_ANIMATION_MS = 150;
 const ATTACK_ANIMATION_MS = 1200;
 const DEATH_ANIMATION_MS = 700;
-const CAMERA_VIEWPORT_PRESETS = [
+export const CAMERA_VIEWPORT_PRESETS = [
   { label: "15x20", rows: 15, columns: 20 },
   { label: "12x16", rows: 12, columns: 16 },
   { label: "9x12", rows: 9, columns: 12 },
 ] as const;
 
-export function BattleCanvas(props: BattleCanvasProps) {
+export const BattleCanvas = forwardRef<BattleCanvasHandle, BattleCanvasProps>(function BattleCanvas(props, ref) {
   const {
     runtime,
     tiles,
@@ -99,13 +123,20 @@ export function BattleCanvas(props: BattleCanvasProps) {
     moveHighlightTiles,
     moveHighlightTeam,
     attackHighlightTiles,
+    healHighlightTiles,
     isAttackTargeting,
+    isHealTargeting,
     targetableEnemyTiles,
+    targetableAllyTiles,
     hoveredAttackTargetTile,
+    hoveredHealTargetTile,
     selectedEnemyThreatTiles,
     hoveredMovePath,
     enemyThreatOutlineTiles,
     previewMove,
+    viewportPresetIndex,
+    onViewportPresetIndexChange,
+    onViewportChange,
     presentationQueue,
     grayLockUnitIds,
     pendingDefeatedUnitIds,
@@ -121,9 +152,9 @@ export function BattleCanvas(props: BattleCanvasProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const frameRef = useRef<number | undefined>(undefined);
-  const [viewportPresetIndex, setViewportPresetIndex] = useState(0);
   const [cameraOffsetTiles, setCameraOffsetTiles] = useState({ x: 0, y: 0 });
   const cameraOffsetRef = useRef({ x: 0, y: 0 });
+  const lastPointerAnchorRef = useRef<PointerAnchor | undefined>(undefined);
   const [metrics, setMetrics] = useState<BoardMetrics>({
     viewportWidth: width * 64,
     viewportHeight: height * 64,
@@ -145,9 +176,17 @@ export function BattleCanvas(props: BattleCanvasProps) {
     () => new Set(attackHighlightTiles.map(toPositionKey)),
     [attackHighlightTiles],
   );
+  const healHighlightSet = useMemo(
+    () => new Set(healHighlightTiles.map(toPositionKey)),
+    [healHighlightTiles],
+  );
   const targetableEnemySet = useMemo(
     () => new Set(targetableEnemyTiles.map(toPositionKey)),
     [targetableEnemyTiles],
+  );
+  const targetableAllySet = useMemo(
+    () => new Set(targetableAllyTiles.map(toPositionKey)),
+    [targetableAllyTiles],
   );
   const selectedEnemyThreatSet = useMemo(
     () => new Set(selectedEnemyThreatTiles.map(toPositionKey)),
@@ -162,6 +201,19 @@ export function BattleCanvas(props: BattleCanvasProps) {
     runtime.phase === "enemy" ||
     Boolean(activePresentation) ||
     Boolean(activePreviewMove && !activePreviewMove.completed);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      zoomIn: () => {
+        requestViewportPresetChange(1);
+      },
+      zoomOut: () => {
+        requestViewportPresetChange(-1);
+      },
+    }),
+    [height, hoveredTile, isZoomLocked, metrics, selectedTile, viewportPresetIndex, width],
+  );
 
   function drawCurrentFrame(cameraOffsetOverride?: { x: number; y: number }) {
     const canvas = canvasRef.current;
@@ -198,9 +250,13 @@ export function BattleCanvas(props: BattleCanvasProps) {
       moveHighlightSet,
       moveHighlightTeam,
       attackHighlightSet,
+      healHighlightSet,
       isAttackTargeting,
+      isHealTargeting,
       targetableEnemySet,
+      targetableAllySet,
       hoveredAttackTargetTile,
+      hoveredHealTargetTile,
       selectedEnemyThreatSet,
       hoveredMovePath,
       enemyThreatOutlineSet,
@@ -265,6 +321,15 @@ export function BattleCanvas(props: BattleCanvasProps) {
   }, [height, metrics, width]);
 
   useEffect(() => {
+    onViewportChange?.({
+      offsetX: cameraOffsetTiles.x,
+      offsetY: cameraOffsetTiles.y,
+      visibleColumns: metrics.visibleColumns,
+      visibleRows: metrics.visibleRows,
+    });
+  }, [cameraOffsetTiles.x, cameraOffsetTiles.y, metrics.visibleColumns, metrics.visibleRows, onViewportChange]);
+
+  useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (
         event.target instanceof HTMLElement &&
@@ -278,13 +343,13 @@ export function BattleCanvas(props: BattleCanvasProps) {
       const key = event.key.toLowerCase();
       if ((key === "+" || key === "=") && !isZoomLocked) {
         event.preventDefault();
-        changeViewportPreset(1);
+        requestViewportPresetChange(1);
         return;
       }
 
       if ((key === "-" || key === "_") && !isZoomLocked) {
         event.preventDefault();
-        changeViewportPreset(-1);
+        requestViewportPresetChange(-1);
         return;
       }
 
@@ -500,6 +565,13 @@ export function BattleCanvas(props: BattleCanvasProps) {
             onTileHover(undefined);
             return;
           }
+          lastPointerAnchorRef.current = getPointerAnchor(
+            event,
+            metrics,
+            cameraOffsetTiles,
+            width,
+            height,
+          );
           const position = getTileFromPointer(event, metrics, cameraOffsetTiles, width, height);
           onTileHover(position);
         }}
@@ -508,35 +580,17 @@ export function BattleCanvas(props: BattleCanvasProps) {
             return;
           }
           event.preventDefault();
+          const pointerAnchor = getPointerAnchor(event, metrics, cameraOffsetTiles, width, height);
           if (event.deltaY < 0) {
-            changeViewportPreset(1);
+            requestViewportPresetChange(1, pointerAnchor);
             return;
           }
 
           if (event.deltaY > 0) {
-            changeViewportPreset(-1);
+            requestViewportPresetChange(-1, pointerAnchor);
           }
         }}
       />
-      <div className="camera-controls" aria-label="Map camera controls">
-        <button
-          type="button"
-          aria-label="Zoom out"
-          disabled={isZoomLocked || viewportPresetIndex <= 0}
-          onClick={() => changeViewportPreset(-1)}
-        >
-          -
-        </button>
-        <span className="camera-zoom-label">{CAMERA_VIEWPORT_PRESETS[viewportPresetIndex].label}</span>
-        <button
-          type="button"
-          aria-label="Zoom in"
-          disabled={isZoomLocked || viewportPresetIndex >= CAMERA_VIEWPORT_PRESETS.length - 1}
-          onClick={() => changeViewportPreset(1)}
-        >
-          +
-        </button>
-      </div>
       {cameraOffsetTiles.x > 0 ? <div className="camera-edge camera-edge-left" /> : null}
       {cameraOffsetTiles.x < getMaxCameraOffsetTiles(metrics, width, height).x ? (
         <div className="camera-edge camera-edge-right" />
@@ -570,34 +624,26 @@ export function BattleCanvas(props: BattleCanvasProps) {
     });
   }
 
-  function changeViewportPreset(delta: number) {
+  function requestViewportPresetChange(delta: number, anchorOverride?: PointerAnchor) {
+    if (isZoomLocked) {
+      return;
+    }
+
     const nextIndex = clamp(viewportPresetIndex + delta, 0, CAMERA_VIEWPORT_PRESETS.length - 1);
     if (nextIndex === viewportPresetIndex) {
       return;
     }
 
-    const focusPosition = selectedTile
-      ? { x: selectedTile.x, y: selectedTile.y }
-      : {
-          x: cameraOffsetRef.current.x + metrics.visibleColumns / 2,
-          y: cameraOffsetRef.current.y + metrics.visibleRows / 2,
-        };
     const nextPreset = CAMERA_VIEWPORT_PRESETS[nextIndex];
     const nextVisibleColumns = Math.min(width, nextPreset.columns);
     const nextVisibleRows = Math.min(height, nextPreset.rows);
-    const nextOffset = clampCameraOffsetTiles(
-      {
-        x: Math.round(focusPosition.x - nextVisibleColumns / 2),
-        y: Math.round(focusPosition.y - nextVisibleRows / 2),
-      },
-      {
-        ...metrics,
-        visibleColumns: nextVisibleColumns,
-        visibleRows: nextVisibleRows,
-      },
-      width,
-      height,
-    );
+    const nextMetrics = {
+      ...metrics,
+      visibleColumns: nextVisibleColumns,
+      visibleRows: nextVisibleRows,
+    };
+    const anchor = resolveZoomAnchor(anchorOverride);
+    const nextOffset = getZoomAnchoredCameraOffset(anchor, nextMetrics, width, height);
 
     cameraOffsetRef.current = nextOffset;
     setCameraOffsetTiles((current) => {
@@ -606,9 +652,35 @@ export function BattleCanvas(props: BattleCanvasProps) {
       }
       return nextOffset;
     });
-    setViewportPresetIndex(nextIndex);
+    onViewportPresetIndexChange?.(nextIndex);
   }
-}
+
+  function resolveZoomAnchor(anchorOverride?: PointerAnchor): PointerAnchor {
+    if (anchorOverride) {
+      return anchorOverride;
+    }
+
+    if (hoveredTile && lastPointerAnchorRef.current) {
+      return lastPointerAnchorRef.current;
+    }
+
+    if (selectedTile) {
+      return {
+        boardX: selectedTile.x + 0.5,
+        boardY: selectedTile.y + 0.5,
+        viewportRatioX: 0.5,
+        viewportRatioY: 0.5,
+      };
+    }
+
+    return {
+      boardX: cameraOffsetRef.current.x + metrics.visibleColumns / 2,
+      boardY: cameraOffsetRef.current.y + metrics.visibleRows / 2,
+      viewportRatioX: 0.5,
+      viewportRatioY: 0.5,
+    };
+  }
+});
 
 function drawBoard(
   context: CanvasRenderingContext2D,
@@ -624,9 +696,13 @@ function drawBoard(
     moveHighlightSet: Set<string>;
     moveHighlightTeam?: Team;
     attackHighlightSet: Set<string>;
+    healHighlightSet: Set<string>;
     isAttackTargeting: boolean;
+    isHealTargeting: boolean;
     targetableEnemySet: Set<string>;
+    targetableAllySet: Set<string>;
     hoveredAttackTargetTile?: Position;
+    hoveredHealTargetTile?: Position;
     selectedEnemyThreatSet: Set<string>;
     hoveredMovePath: Position[];
     enemyThreatOutlineSet: Set<string>;
@@ -652,9 +728,12 @@ function drawBoard(
     moveHighlightSet,
     moveHighlightTeam,
     attackHighlightSet,
+    healHighlightSet,
     isAttackTargeting,
     targetableEnemySet,
+    targetableAllySet,
     hoveredAttackTargetTile,
+    hoveredHealTargetTile,
     selectedEnemyThreatSet,
     hoveredMovePath,
     enemyThreatOutlineSet,
@@ -701,6 +780,11 @@ function drawBoard(
 
       if (attackHighlightSet.has(key)) {
         context.fillStyle = "rgba(163, 35, 29, 0.2)";
+        context.fillRect(px, py, metrics.tileSize, metrics.tileSize);
+      }
+
+      if (healHighlightSet.has(key)) {
+        context.fillStyle = "rgba(44, 146, 78, 0.22)";
         context.fillRect(px, py, metrics.tileSize, metrics.tileSize);
       }
 
@@ -782,10 +866,16 @@ function drawBoard(
       isAttackTargeting,
       selectedEnemyThreatSet.has(toPositionKey(unit.position)),
       targetableEnemySet.has(toPositionKey(unit.position)),
+      targetableAllySet.has(toPositionKey(unit.position)),
       Boolean(
         hoveredAttackTargetTile &&
         hoveredAttackTargetTile.x === unit.position.x &&
         hoveredAttackTargetTile.y === unit.position.y,
+      ),
+      Boolean(
+        hoveredHealTargetTile &&
+        hoveredHealTargetTile.x === unit.position.x &&
+        hoveredHealTargetTile.y === unit.position.y,
       ),
     );
   }
@@ -805,7 +895,9 @@ function drawUnit(
   isAttackTargeting: boolean,
   isThreatSelectedEnemy: boolean,
   isTargetableEnemy: boolean,
+  isTargetableAlly: boolean,
   isHoveredAttackTarget: boolean,
+  isHoveredHealTarget: boolean,
 ) {
   const combatMotion = getCombatVisualState(unit.id, activePresentation, animationClock, tileSize);
   const centerX = displayedState.position.x * tileSize + tileSize / 2 + combatMotion.shakeX;
@@ -819,7 +911,9 @@ function drawUnit(
 
   context.save();
   const dimForInvalidTarget =
-    isAttackTargeting && unit.team === "enemy" && !isTargetableEnemy ? 0.38 : 1;
+    isAttackTargeting && unit.team === "enemy" && !isTargetableEnemy
+      ? 0.38
+      : 1;
   context.globalAlpha = displayedState.opacity * dimForInvalidTarget;
 
   context.fillStyle = "rgba(32, 20, 12, 0.65)";
@@ -916,6 +1010,38 @@ function drawUnit(
 
     if (isHoveredAttackTarget) {
       context.strokeStyle = "rgba(255, 214, 209, 0.95)";
+      context.lineWidth = Math.max(1.5, tileSize * 0.03);
+      context.beginPath();
+      context.ellipse(
+        centerX,
+        bodyCenterY,
+        bodyWidth * 0.84,
+        bodyHeight * 0.9,
+        0,
+        0,
+        Math.PI * 2,
+      );
+      context.stroke();
+    }
+  }
+
+  if (isTargetableAlly) {
+    context.strokeStyle = isHoveredHealTarget ? "rgba(55, 178, 102, 0.98)" : "rgba(42, 156, 87, 0.88)";
+    context.lineWidth = isHoveredHealTarget ? Math.max(3, tileSize * 0.07) : Math.max(2, tileSize * 0.05);
+    context.beginPath();
+    context.ellipse(
+      centerX,
+      bodyCenterY,
+      bodyWidth * 0.7,
+      bodyHeight * 0.76,
+      0,
+      0,
+      Math.PI * 2,
+    );
+    context.stroke();
+
+    if (isHoveredHealTarget) {
+      context.strokeStyle = "rgba(214, 255, 226, 0.95)";
       context.lineWidth = Math.max(1.5, tileSize * 0.03);
       context.beginPath();
       context.ellipse(
@@ -1046,7 +1172,7 @@ function drawUnitFamilyGlyph(
       context.moveTo(centerX - bodyWidth * 0.08, bodyCenterY + bodyHeight * 0.14);
       context.lineTo(centerX + bodyWidth * 0.08, bodyCenterY + bodyHeight * 0.14);
       break;
-    case "healing":
+    case "staff":
       context.moveTo(centerX, bodyCenterY - bodyHeight * 0.2);
       context.lineTo(centerX, bodyCenterY + bodyHeight * 0.2);
       context.moveTo(centerX - bodyWidth * 0.16, bodyCenterY);
@@ -1353,6 +1479,64 @@ function getTileFromPointer(
   }
 
   return { x, y };
+}
+
+function getPointerAnchor(
+  event: React.MouseEvent<HTMLCanvasElement>,
+  metrics: BoardMetrics,
+  cameraOffsetTiles: { x: number; y: number },
+  width: number,
+  height: number,
+): PointerAnchor | undefined {
+  const bounds = event.currentTarget.getBoundingClientRect();
+  const scaleX = bounds.width / metrics.viewportWidth;
+  const scaleY = bounds.height / metrics.viewportHeight;
+  const displayedTileWidth = metrics.tileSize * scaleX;
+  const displayedTileHeight = metrics.tileSize * scaleY;
+  const displayedBoardWidth = metrics.boardWidth * scaleX;
+  const displayedBoardHeight = metrics.boardHeight * scaleY;
+  const boardOriginX =
+    width <= metrics.visibleColumns
+      ? (bounds.width - displayedBoardWidth) / 2
+      : -cameraOffsetTiles.x * displayedTileWidth;
+  const boardOriginY =
+    height <= metrics.visibleRows
+      ? (bounds.height - displayedBoardHeight) / 2
+      : -cameraOffsetTiles.y * displayedTileHeight;
+  const viewportX = event.clientX - bounds.left;
+  const viewportY = event.clientY - bounds.top;
+  const boardX = (viewportX - boardOriginX) / displayedTileWidth;
+  const boardY = (viewportY - boardOriginY) / displayedTileHeight;
+
+  if (boardX < 0 || boardY < 0 || boardX >= width || boardY >= height) {
+    return undefined;
+  }
+
+  return {
+    boardX,
+    boardY,
+    viewportRatioX: bounds.width <= 0 ? 0.5 : viewportX / bounds.width,
+    viewportRatioY: bounds.height <= 0 ? 0.5 : viewportY / bounds.height,
+  };
+}
+
+function getZoomAnchoredCameraOffset(
+  anchor: PointerAnchor,
+  metrics: BoardMetrics,
+  width: number,
+  height: number,
+) {
+  const viewportTileX = anchor.viewportRatioX * metrics.visibleColumns;
+  const viewportTileY = anchor.viewportRatioY * metrics.visibleRows;
+  return clampCameraOffsetTiles(
+    {
+      x: anchor.boardX - viewportTileX,
+      y: anchor.boardY - viewportTileY,
+    },
+    metrics,
+    width,
+    height,
+  );
 }
 
 function getMaxCameraOffsetTiles(metrics: BoardMetrics, width: number, height: number) {
