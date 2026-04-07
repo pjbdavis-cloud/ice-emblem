@@ -1,47 +1,19 @@
-import type { BattleMapDefinition, ClassDefinition, UnitDefinition, WeaponDefinition } from "../types";
+import type {
+  BattleMapDefinition,
+  CharacterDefinition,
+  CharacterPlacement,
+  ClassDefinition,
+  UnitDefinition,
+  WeaponDefinition,
+} from "../types";
+import { gameCharacters } from "./characters";
+import { gameClasses } from "./classes";
+import { buildBattleMapDefinition, createPlainTiles, resolvePlacedCharacters } from "./maps";
+import { gameWeapons } from "./weapons";
 
 // Copy and edit these examples as you add real game content by hand.
 
-const statLine = (
-  maxHp: number,
-  strength: number,
-  skill: number,
-  luck: number,
-  defense: number,
-  resistance: number,
-  speed: number,
-) => ({
-  maxHp,
-  strength,
-  skill,
-  luck,
-  defense,
-  resistance,
-  speed,
-});
-
-export const classSkeletons: ClassDefinition[] = [
-  {
-    id: "my-journeyman",
-    name: "My Journeyman",
-    tier: 1,
-    movement: 5,
-    learnableDisciplines: ["sword"],
-    baseStats: statLine(20, 5, 5, 5, 4, 2, 6),
-    growthRates: statLine(70, 35, 35, 45, 30, 20, 45),
-    statCaps: statLine(40, 18, 18, 22, 16, 12, 20),
-  },
-  {
-    id: "my-pupil",
-    name: "My Pupil",
-    tier: 1,
-    movement: 5,
-    learnableDisciplines: ["elemental_magic"],
-    baseStats: statLine(17, 6, 2, 5, 2, 5, 5),
-    growthRates: statLine(55, 60, 20, 40, 20, 45, 45),
-    statCaps: statLine(34, 22, 12, 26, 12, 18, 20),
-  },
-];
+export const classSkeletons: ClassDefinition[] = gameClasses;
 
 export const weaponSkeletons: WeaponDefinition[] = [
   {
@@ -76,11 +48,11 @@ export const weaponSkeletons: WeaponDefinition[] = [
   },
 ];
 
-export const unitSkeletons: UnitDefinition[] = [
+export const characterSkeletons: CharacterDefinition[] = [
   {
     id: "player-template",
     name: "Template Hero",
-    classId: "my-journeyman",
+    classId: "journeyman",
     team: "player",
     level: 1,
     experience: 0,
@@ -95,11 +67,10 @@ export const unitSkeletons: UnitDefinition[] = [
       speed: 7,
     },
     currentHp: 21,
-    position: { x: 0, y: 0 },
-    inventory: ["ember"],
-    equippedWeaponId: "ember",
+    inventory: ["training-sword"],
+    equippedWeaponId: "training-sword",
     weaponProficiencies: {
-      elemental_magic: "E",
+      sword: "E",
     },
     growthBonuses: {
       strength: 5,
@@ -112,7 +83,7 @@ export const unitSkeletons: UnitDefinition[] = [
   {
     id: "enemy-template",
     name: "Template Enemy",
-    classId: "my-pupil",
+    classId: "pupil",
     team: "enemy",
     level: 2,
     experience: 0,
@@ -127,11 +98,10 @@ export const unitSkeletons: UnitDefinition[] = [
       speed: 6,
     },
     currentHp: 18,
-    position: { x: 4, y: 2 },
-    inventory: ["training-sword"],
-    equippedWeaponId: "training-sword",
+    inventory: ["ember"],
+    equippedWeaponId: "ember",
     weaponProficiencies: {
-      sword: "E",
+      elemental_magic: "E",
     },
     growthBonuses: {
       maxHp: 5,
@@ -141,20 +111,32 @@ export const unitSkeletons: UnitDefinition[] = [
   },
 ];
 
-export const mapSkeleton: BattleMapDefinition = {
-  id: "new-map-template",
-  name: "New Map Template",
-  width: 10,
-  height: 8,
-  tiles: Array.from({ length: 8 }, () =>
-    Array.from({ length: 10 }, () => ({
-      terrain: "plain" as const,
-    })),
-  ),
-  objectives: {
-    type: "route",
+export const unitSkeletons: UnitDefinition[] = resolvePlacedCharacters(characterSkeletons, [
+  { characterId: "player-template", position: { x: 0, y: 0 } },
+  { characterId: "enemy-template", position: { x: 4, y: 2 } },
+]);
+
+export const gameCharacterSkeletons: CharacterDefinition[] = gameCharacters;
+export const gameWeaponSkeletons: WeaponDefinition[] = gameWeapons;
+
+const mapCharacterPlacements: CharacterPlacement[] = [
+  { characterId: "player-template", position: { x: 0, y: 0 } },
+  { characterId: "enemy-template", position: { x: 4, y: 2 } },
+];
+
+export const mapSkeleton: BattleMapDefinition = buildBattleMapDefinition({
+  map: {
+    id: "new-map-template",
+    name: "New Map Template",
+    width: 10,
+    height: 8,
+    tiles: createPlainTiles(10, 8),
+    objectives: {
+      type: "route",
+    },
   },
   classes: classSkeletons,
   weapons: weaponSkeletons,
-  units: unitSkeletons,
-};
+  characters: characterSkeletons,
+  placements: mapCharacterPlacements,
+});

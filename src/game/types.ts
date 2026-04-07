@@ -65,6 +65,14 @@ export type UnitDefinition = {
   isBoss?: boolean;
 };
 
+export type CharacterDefinition = Omit<UnitDefinition, "position">;
+
+export type CharacterPlacement = {
+  characterId: string;
+  position: Position;
+  currentHp?: number;
+};
+
 export type ClassDefinition = {
   id: string;
   name: string;
